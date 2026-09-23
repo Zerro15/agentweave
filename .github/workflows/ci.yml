@@ -56,3 +56,31 @@ jobs:
       - run: python -m pip install build twine
       - run: python -m build
       - run: twine check dist/*
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - run: pip install -c constraints/ci.txt -e .[dev]
+      - name: Ruff correctness gate
+        run: ruff check agentweave agentweave_byom agentweave_security tests
+      - name: Mypy typed-surface gate
+        run: mypy agentweave/runtime_types.py agentweave_security/authorization.py
+
+  reproducible-python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.14']
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -c constraints/ci.txt -e .[dev]
+      - run: python -m pip check
+      - run: pytest -q tests/test_runtime_hardening_v07.py tests/test_security_hardening.py
