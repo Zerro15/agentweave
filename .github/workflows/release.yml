@@ -24,8 +24,12 @@ jobs:
           python-version: '3.11'
       - name: Install build and test dependencies
         run: python -m pip install -U pip build twine && pip install -e '.[dev]'
-      - name: Test
+      - name: Test core
         run: pytest -q
+      - name: Test supported upstream integrations
+        run: |
+          pip install -e '.[dev,all-integrations]'
+          pytest -q tests/test_upstream_integration_compat.py
       - name: Verify release version metadata
         run: |
           python - <<'PY'
