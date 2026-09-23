@@ -7,8 +7,12 @@
 [![A2A SDK Interop](https://github.com/sauravsingla/agentweave/actions/workflows/sdk-interop.yml/badge.svg)](https://github.com/sauravsingla/agentweave/actions/workflows/sdk-interop.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Cite](https://img.shields.io/badge/cite-CITATION.cff-blue.svg)](CITATION.cff)
+[![PyPI](https://img.shields.io/pypi/v/agentweave-router.svg)](https://pypi.org/project/agentweave-router/)
+[![Python](https://img.shields.io/pypi/pyversions/agentweave-router.svg)](https://pypi.org/project/agentweave-router/)
 
 **Pre-inference routing and secure execution for tool-rich LLM and multi-agent systems.**
+
+**PyPI:** `agentweave-router` · **Python import:** `agentweave` · **Current release:** `v0.7.0`
 
 AgentWeave reduces the tools or agents visible to a model before inference while keeping **scope policy, authorization, provenance, recovery, and execution explicit**.
 
@@ -43,7 +47,13 @@ AgentWeave does **not** replace MCP, LangGraph, AutoGen, A2A, or your model. It 
 
 ## 30-second start
 
-Install the MCP extra; the distribution is `agentweave-router` while the Python package remains `agentweave`.
+Install the base package from PyPI:
+
+```bash
+pip install agentweave-router
+```
+
+The PyPI distribution is `agentweave-router`; Python imports use `agentweave` (and the bundled `agentweave_byom` adapter package). For the MCP example below, install the MCP extra:
 
 ```bash
 pip install 'agentweave-router[mcp]'
