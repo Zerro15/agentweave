@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
 
@@ -59,6 +60,15 @@ class SafeHttpTransport:
         if status_code in {307, 308}:
             return True
         return method in {"GET", "HEAD"} and status_code in {301, 302, 303}
+
+    @staticmethod
+    async def _close_response(response: Any) -> None:
+        close = getattr(response, "aclose", None)
+        if close is None:
+            return
+        result = close()
+        if inspect.isawaitable(result):
+            await result
 
     async def request(
         self,
@@ -161,14 +171,14 @@ class SafeHttpTransport:
                 if not location:
                     return response
                 if not self._redirect_allowed(method, response.status_code):
-                    await response.aclose()
+                    await self._close_response(response)
                     raise RuntimeError(
                         f"Refusing redirect status {response.status_code} for {method}"
                     )
                 if hop >= self.max_redirects:
-                    await response.aclose()
+                    await self._close_response(response)
                     raise RuntimeError("HTTP redirect limit exceeded")
-                await response.aclose()
+                await self._close_response(response)
                 current_url = urljoin(current_url, location)
             raise RuntimeError("HTTP redirect limit exceeded")
         finally:
