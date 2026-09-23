@@ -16,14 +16,28 @@ import agentweave
 
 This avoids the unrelated `agentweave` distribution name on PyPI without forcing application imports to change.
 
+## 0.7 canonical runtime
+
+New applications should start with `AgentWeaveRuntime` or lifecycle-owned `AgentWeaveApplication`.
+
+The canonical security/execution sequence is:
+
+```text
+catalog → scope → routing → model → schema validation → authorization → executor → recovery
+```
+
+The runtime contracts intentionally separate stable tool identity from the function name shown to a model. `ToolSpec.key` identifies the provider/source tool; `ToolSpec.model_name` can supply a distinct model-visible alias when several sources expose the same native name. Duplicate model-visible names fail loudly instead of silently selecting one provider.
+
+`ToolCall` and `ToolResult` carry the resolved tool identity through execution. Model arguments are validated against `ToolSpec.input_schema` before authorization. Custom authorization policies can implement `authorize_tool(call=..., tool=..., context=...)` to inspect arguments and full tool/provider metadata; legacy `authorize(action=..., context=...)` policies remain supported.
+
 ## Pre-1.0 stable root surface
 
-Before 1.0, the explicitly supported root surface is the curated `agentweave.__all__` list. It is intentionally small and centered on:
+Before 1.0, the explicitly supported root surface is the curated `agentweave.__all__` list. It is intentionally centered on:
 
-- `AgentWeave` and `AgentWeaveRuntime`;
-- normalized runtime contracts such as `ToolSpec`, `ToolCall`, `ToolResult`, `ModelResponse`, `RunContext`, and `RuntimeResult`;
+- `AgentWeave`, `AgentWeaveRuntime`, and `AgentWeaveApplication`;
+- normalized runtime contracts such as `ToolSpec`, `ToolCall`, `ToolResult`, `ModelResponse`, `RunContext`, `RuntimeResult`, and runtime telemetry;
 - runtime builder/configuration contracts;
-- catalog/executor/scope/search interfaces;
+- catalog/executor/scope/search/authorization interfaces;
 - `SafeHttpTransport`;
 - typed plugin contracts.
 
@@ -35,6 +49,16 @@ Historical names such as `AgentProfile`, `Capability`, `InMemoryA2AAdapter`, ben
 
 New code should either use the canonical runtime surface or import advanced/experimental classes from their defining submodule.
 
+## Plugin API
+
+Plugins target the major `PLUGIN_API_VERSION`. Duplicate component/plugin registration fails rather than silently replacing an earlier implementation. Plugin startup is transactional and is owned automatically by `AgentWeaveApplication`; failed partial startup is rolled back before the application returns control.
+
+## Integration compatibility
+
+MCP, LangGraph, AutoGen, and A2A protocol/framework compatibility are versioned independently from AgentWeave. Their supported dependency ranges are declared as optional extras. Real supported MCP/LangGraph/AutoGen packages are installed in dedicated compatibility CI so upstream API drift is distinguished from unit-test-double regressions.
+
+For MCP, AgentWeave can own a reusable session lifecycle through `MCPConnection`. HTTP MCP targets are endpoint-validated before connection establishment; the MCP SDK still owns its protocol wire transport unless an application supplies a custom client factory.
+
 ## Experimental surface
 
 Implementation-detail modules, CI scripts, research/evaluation code, proof harnesses, generated benchmark artifacts, and advanced protocol helpers may evolve in minor releases. Pin a package version if depending directly on them.
@@ -42,7 +66,3 @@ Implementation-detail modules, CI scripts, research/evaluation code, proof harne
 ## Deprecation
 
 Where practical, behavior that was previously public remains available for at least one migration window and emits a deprecation notice naming the preferred surface. Unsafe behavior may be changed without preserving an insecure compatibility path.
-
-## Protocol compatibility
-
-A2A and MCP protocol compatibility are versioned independently from AgentWeave. Integrations should advertise/accept the protocol version appropriate to the remote endpoint and validate against upstream conformance tools where applicable.
