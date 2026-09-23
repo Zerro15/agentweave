@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import warnings
 
+from .application import AgentWeaveApplication
 from .config import (
     AgentWeaveBuilder,
     CatalogConfig,
@@ -29,6 +30,7 @@ from .runtime import (
     RuntimeAuthorizationPolicy,
     ScopePolicy,
     StaticToolCatalog,
+    ToolAuthorizationPolicy,
     ToolSearchProvider,
     normalize_model_response,
 )
@@ -36,16 +38,19 @@ from .runtime_types import (
     ModelResponse,
     RunContext,
     RuntimeResult,
+    RuntimeStageEvent,
+    RuntimeTelemetry,
     ToolCall,
     ToolResult,
     ToolSpec,
 )
 from .safe_http import SafeHttpTransport
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     "AgentWeave",
+    "AgentWeaveApplication",
     "AgentWeaveRuntime",
     "ToolSpec",
     "ToolCall",
@@ -53,10 +58,13 @@ __all__ = [
     "ModelResponse",
     "RunContext",
     "RuntimeResult",
+    "RuntimeStageEvent",
+    "RuntimeTelemetry",
     "RoutingPreview",
     "CatalogProvider",
     "Executor",
     "ScopePolicy",
+    "ToolAuthorizationPolicy",
     "ToolSearchProvider",
     "StaticToolCatalog",
     "CallableExecutor",
