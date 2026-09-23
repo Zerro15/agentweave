@@ -99,7 +99,13 @@ jobs:
             echo "::error::Release $TAG already exists; refusing to overwrite published assets."
             exit 1
           fi
-          gh release create "$TAG" dist/* --generate-notes --title "AgentWeave $TAG"
+          gh release create "$TAG" --draft --generate-notes --title "AgentWeave $TAG"
+          gh release upload "$TAG" dist/*
+          gh release edit "$TAG" --draft=false
+          IMMUTABLE=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" --jq '.immutable // false')
+          if [ "$IMMUTABLE" != "true" ]; then
+            echo "::warning::Repository release immutability is not enabled; enable it in Settings > Releases so future published releases become immutable."
+          fi
 
   publish-pypi:
     if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish_pypi == true && startsWith(github.ref, 'refs/tags/v')) }}
