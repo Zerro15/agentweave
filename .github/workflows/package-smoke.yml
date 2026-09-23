@@ -80,3 +80,22 @@ jobs:
             langgraph) /tmp/agentweave-smoke/bin/python -c 'from langgraph.graph import StateGraph; from agentweave.integrations.langgraph import AgentWeaveLangGraphNode' ;;
             autogen) /tmp/agentweave-smoke/bin/python -c 'import autogen_agentchat; from agentweave.integrations.autogen import AgentWeaveAutoGenSelector' ;;
           esac
+
+  install-smoke-python314:
+    needs: build-wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-wheel
+          path: dist
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - name: Install base wheel on Python 3.14
+        run: |
+          python -m venv /tmp/agentweave-smoke-314
+          WHEEL=$(ls dist/*.whl)
+          /tmp/agentweave-smoke-314/bin/pip install "$WHEEL"
+          /tmp/agentweave-smoke-314/bin/python -c 'import agentweave, agentweave_byom, agentweave_security; print(agentweave.__version__)'
+          /tmp/agentweave-smoke-314/bin/agentweave version
