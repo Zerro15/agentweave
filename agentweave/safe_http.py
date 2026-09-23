@@ -141,12 +141,11 @@ class SafeHttpTransport:
                         extensions=extensions,
                         **request_kwargs,
                     )
+                    send_kwargs: dict[str, Any] = {"follow_redirects": False}
+                    if stream_response:
+                        send_kwargs["stream"] = True
                     try:
-                        response = await active_client.send(
-                            request,
-                            follow_redirects=False,
-                            stream=stream_response,
-                        )
+                        response = await active_client.send(request, **send_kwargs)
                         break
                     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                         last_connect_error = exc
