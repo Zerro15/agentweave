@@ -1,70 +1,57 @@
-# LangGraph integration example
+# LangGraph integration
 
-This example shows how to use AgentWeave as a routing node inside a LangGraph workflow.
-
-The boundary is:
+AgentWeave provides a first-class async LangGraph routing node backed only by the public `AgentWeaveRuntime` API.
 
 ```text
 LangGraph state
     ↓
-AgentWeave requirement analysis + policy filtering + ranking + team selection
+AgentWeaveLangGraphNode
     ↓
-selected agent IDs + structured selection explanation
+AgentWeaveRuntime.preview_route()
+    ↓
+selected/permitted candidates + confidence + provenance
     ↓
 normal LangGraph downstream nodes
 ```
 
-The example is intentionally local and keyless. It does not call an LLM or an external API. Its purpose is to demonstrate the orchestration boundary cleanly.
-
-## What it demonstrates
-
-`examples/langgraph_agentweave.py` builds a small `StateGraph` with two nodes:
-
-1. `agentweave_route` uses AgentWeave to analyze the request, apply policy filtering, rank candidates, choose a small team, and return a structured explanation.
-2. `downstream_work` represents whatever the LangGraph application normally does next: call a model, execute tools, invoke agents, branch, checkpoint, or continue a longer workflow.
-
-This follows LangGraph's normal graph pattern: state enters a node, the node returns a state update, and edges determine what runs next.
-
-## Run it
-
-From the repository root:
+## Install
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-pip install -U langgraph
-python examples/langgraph_agentweave.py
+pip install 'agentweave-router[langgraph]'
 ```
 
-No API key is required.
+## Use as a graph node
 
-## Real application wiring
+```python
+from langgraph.graph import START, END, StateGraph
+from agentweave.integrations.langgraph import langgraph_node
 
-In a production LangGraph application, the routing node can sit before expensive model or agent execution:
+runtime = ...  # AgentWeaveRuntime
 
-```text
-START
-  ↓
-AgentWeave route
-  ↓
-selected specialist(s)
-  ↓
-model / tool / agent nodes
-  ↓
-END or next workflow state
+graph = StateGraph(MyState)
+graph.add_node('route', langgraph_node(runtime, query_key='query'))
+graph.add_edge(START, 'route')
+graph.add_edge('route', 'work')
+graph.add_edge('work', END)
+app = graph.compile()
 ```
 
-The selected agent IDs can be used to choose a subgraph, select a tool family, dispatch to remote A2A agents, or populate model-visible capabilities.
+The node returns:
 
-AgentWeave's selection explanation can also be retained in LangGraph state for later debugging or audit use.
+- `agentweave_selected_tools`;
+- `agentweave_permitted_tools`;
+- `agentweave_routing_confidence`;
+- `agentweave_routing_abstained`;
+- `agentweave_routing_provenance`.
 
-## Why this integration is useful
+A `context_factory` can turn graph state into a `RunContext` for tenant, role, permission, scope, environment, and approval-aware routing.
 
-LangGraph provides low-level stateful workflow orchestration. AgentWeave can provide a separate capability-, trust-, policy-, and execution-aware routing decision before the graph continues.
+## Public API boundary
 
-That separation lets the graph own workflow state and control flow while AgentWeave owns specialist selection.
+The integration does not reach into `RequirementAnalyzer`, `AgentMatcher`, `GlobalTeamOptimizer`, registry internals, or observability internals. Those components may evolve without forcing LangGraph applications to change.
+
+See [`examples/langgraph_agentweave.py`](../examples/langgraph_agentweave.py) for a local routing-only example.
 
 ## Evidence boundary
 
-This is an ecosystem integration example, not a benchmark result. It does not imply official LangGraph/LangChain endorsement, and it does not change any frozen AgentWeave research result or BFCL-derived study.
+This is an ecosystem integration feature, not a benchmark result. It does not imply LangGraph/LangChain endorsement or modify frozen AgentWeave research evidence.
