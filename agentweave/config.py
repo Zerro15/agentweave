@@ -225,19 +225,21 @@ class RuntimeFactory:
 
     def _catalog_and_executor(self, config: CatalogConfig) -> tuple[Any, Any]:
         if config.kind == "mcp":
-            from .integrations.mcp import MCPExecutor, MCPToolCatalog
+            from .integrations.mcp import MCPConnection, MCPExecutor, MCPToolCatalog
 
-            catalog = MCPToolCatalog(
+            options = dict(config.options)
+            source = options.pop("source", None)
+            if options:
+                unknown = ", ".join(sorted(options))
+                raise ValueError(f"unsupported declarative MCP options: {unknown}")
+            connection = MCPConnection(
                 config.target,
                 http_guard=self.http_transport,
-                **dict(config.options),
             )
-            executor = MCPExecutor(
-                config.target,
-                http_guard=self.http_transport,
-                **dict(config.options),
+            return (
+                MCPToolCatalog(connection=connection, source=source),
+                MCPExecutor(connection=connection),
             )
-            return catalog, executor
         if config.kind in self.registry.catalogs:
             catalog = self._plugin_component(
                 self.registry.catalogs,
