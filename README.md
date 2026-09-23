@@ -1,57 +1,178 @@
 # AgentWeave — Route Before You Reason
 
 [![CI](https://github.com/sauravsingla/agentweave/actions/workflows/ci.yml/badge.svg)](https://github.com/sauravsingla/agentweave/actions/workflows/ci.yml)
+[![Integration Compatibility](https://github.com/sauravsingla/agentweave/actions/workflows/integration-compat.yml/badge.svg)](https://github.com/sauravsingla/agentweave/actions/workflows/integration-compat.yml)
 [![A2A SDK Interop](https://github.com/sauravsingla/agentweave/actions/workflows/sdk-interop.yml/badge.svg)](https://github.com/sauravsingla/agentweave/actions/workflows/sdk-interop.yml)
-[![Deep Proof](https://github.com/sauravsingla/agentweave/actions/workflows/deep-proof.yml/badge.svg)](https://github.com/sauravsingla/agentweave/actions/workflows/deep-proof.yml)
-[![Paper Quality](https://github.com/sauravsingla/agentweave/actions/workflows/paper-quality.yml/badge.svg)](https://github.com/sauravsingla/agentweave/actions/workflows/paper-quality.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Cite](https://img.shields.io/badge/cite-CITATION.cff-blue.svg)](CITATION.cff)
 
-**Pre-inference routing for tool-rich LLM and multi-agent systems.**
+**Pre-inference routing and secure execution for tool-rich LLM and multi-agent systems.**
 
-AgentWeave is an open-source **pre-inference routing and reliability layer** maintained by [Saurav Singla](https://github.com/sauravsingla) for MCP, tool-rich LLM applications, and multi-agent systems. It reduces the tools or agents visible to the model before inference while keeping **policy, provenance, recovery, and execution explicit**.
+AgentWeave reduces the tools or agents visible to a model before inference while keeping **scope policy, authorization, provenance, recovery, and execution explicit**.
 
 > **Your agent has 100+ tools. Don't make the model reason over all of them. Route first, then reason over a smaller relevant action space.**
 
 **70.18% fewer tools exposed · 61.70% fewer input tokens · 50.95% lower mean local-model latency**  
 **MCP · A2A · LangGraph · AutoGen · policy-aware routing · recovery · reproducible evaluation**
 
-**Quick links:** [30-second start](#30-second-start) · [Results](#results-at-a-glance) · [MCP](docs/MCP_INTEGRATION.md) · [A2A](docs/A2A_COMPATIBILITY.md) · [Architecture](#architecture) · [Reproduce](docs/BFCL_REPRODUCE.md) · [Paper](https://arxiv.org/abs/2608.23078)
-
-> **Want to try it?** Install AgentWeave and run the test suite in under a minute → [30-second start](#30-second-start)
+**Quick links:** [30-second start](#30-second-start) · [Canonical runtime](#canonical-runtime) · [Results](#results-at-a-glance) · [MCP](docs/MCP_INTEGRATION.md) · [LangGraph](docs/LANGGRAPH_INTEGRATION.md) · [AutoGen](docs/AUTOGEN_INTEGRATION.md) · [Paper](https://arxiv.org/abs/2608.23078)
 
 ```text
-100+ tools / agents
-       ↓
-permission + policy scope
-       ↓
-AgentWeave task-aware routing
-       ↓
-small relevant candidate set
-       ↓
-existing LLM / agent framework
-       ↓
-execution + verification
+catalog
+  ↓
+deterministic scope / permissions
+  ↓
+pre-inference routing
+  ↓
+small model-visible action space
+  ↓
+model tool selection
+  ↓
+schema validation
+  ↓
+argument-aware authorization
+  ↓
+execution
+  ↓
+bounded recovery / rediscovery
 ```
 
-AgentWeave does **not** replace MCP, LangGraph, AutoGen, A2A, or your model. It sits in front of them and reduces the decision space.
+AgentWeave does **not** replace MCP, LangGraph, AutoGen, A2A, or your model. It provides a provider-neutral routing and execution boundary around them.
+
+## 30-second start
+
+Install the distribution `agentweave-router`; the Python package remains `agentweave`.
+
+```bash
+pip install agentweave-router
+```
+
+Minimal provider-neutral routing preview:
+
+```python
+import asyncio
+from agentweave import (
+    AgentWeaveRuntime,
+    CallableExecutor,
+    StaticToolCatalog,
+    ToolSpec,
+)
+
+class NoopModel:
+    async def complete(self, messages, *, tools=None, **kwargs):
+        return {"choices": [{"message": {"content": "done", "tool_calls": []}}]}
+
+async def main():
+    runtime = AgentWeaveRuntime(
+        model=NoopModel(),
+        catalog=StaticToolCatalog([
+            ToolSpec(name="search_docs", description="search technical documentation"),
+            ToolSpec(name="create_invoice", description="create a customer invoice"),
+        ]),
+        executor=CallableExecutor({}),
+        max_tools=1,
+    )
+    preview = await runtime.preview_route("find the routing documentation")
+    print([tool.name for tool in preview.selected])
+
+asyncio.run(main())
+```
+
+For repository development:
+
+```bash
+git clone https://github.com/sauravsingla/agentweave.git
+cd agentweave
+python -m pip install -e '.[dev]'
+pytest -q
+```
+
+## Canonical runtime
+
+`AgentWeaveRuntime` is the primary 0.7+ execution surface. It enforces one ordering instead of asking every integration to wire security correctly:
+
+```text
+catalog → scope → route → model → validate arguments → authorize → execute → recover
+```
+
+Key normalized contracts are `ToolSpec`, `ToolCall`, `ToolResult`, `ModelResponse`, `RunContext`, and `RuntimeResult`.
+
+Tool identity is separate from the function name shown to the model. This matters when several providers expose names such as `search`, `read`, or `query`: stable provider/source IDs are preserved and duplicate model-visible names must be explicitly aliased rather than silently collapsed.
+
+Model-generated arguments are validated against each `ToolSpec.input_schema` before authorization or execution. Authorization policies receive the resolved tool identity, arguments, provider/source metadata, tenant/security context, and model-visible set. Calls outside the routed set fail closed.
+
+Every run also returns per-stage telemetry for catalog discovery, scope/routing, model calls, schema validation, authorization, execution, and recovery.
+
+### MCP runtime
+
+```bash
+pip install 'agentweave-router[mcp]'
+```
+
+```python
+from agentweave import AgentWeaveRuntime, RunContext
+from agentweave.integrations.mcp import MCPConnection, MCPExecutor, MCPToolCatalog
+from agentweave_byom import OpenAICompatibleModelAdapter
+
+connection = MCPConnection("https://tools.example/mcp")
+
+runtime = AgentWeaveRuntime(
+    model=OpenAICompatibleModelAdapter(
+        model="my-model",
+        base_url="https://model.example/v1",
+    ),
+    catalog=MCPToolCatalog(connection=connection),
+    executor=MCPExecutor(connection=connection),
+)
+
+async with runtime:
+    result = await runtime.run(
+        "Search the codebase for the routing implementation",
+        context=RunContext(permissions=frozenset({"read"})),
+    )
+```
+
+The catalog and executor can share one lifecycle-owned MCP session. HTTP MCP targets are revalidated before connection establishment; AgentWeave-owned HTTP traffic uses `SafeHttpTransport` for endpoint validation, DNS pinning/rebinding checks, guarded redirects, Host/SNI preservation, and cross-origin credential stripping.
+
+### Application and plugins
+
+`AgentWeaveApplication` owns runtime and plugin startup/shutdown as one async boundary. Plugin startup is version-checked and transactional, so a partial startup failure is rolled back.
+
+```python
+from agentweave import AgentWeaveApplication
+
+app = AgentWeaveApplication.from_file("agentweave.yaml")
+result = await app.run("Find the invoice and verify it")
+```
 
 ## When should I use AgentWeave?
 
-AgentWeave is designed for systems where a model or agent can access a **large heterogeneous catalog of tools or specialist agents** and the model-visible action space should be reduced before inference.
+Use AgentWeave when a model or agent can access a **large heterogeneous catalog of tools or specialist agents** and the model-visible action space should be reduced before inference.
 
 Typical use cases include MCP servers with large tool catalogs, multi-agent specialist pools, enterprise capability catalogs, A2A ecosystems, LangGraph workflows, AutoGen teams, marketplaces, cloud agents, and edge runtimes.
 
-If deterministic role, tenant, permission, or policy scope already reduces the catalog sufficiently, use that first. AgentWeave's task-aware routing is for the remaining cases where the model-visible action space is still too large.
+If deterministic role, tenant, permission, or policy scope already reduces the catalog sufficiently, apply that first. AgentWeave's task-aware routing operates only on the permitted remainder.
 
-## What is different?
+## Integration model
 
-AgentWeave brings four concerns into one routing layer:
+| Stack | AgentWeave boundary |
+|---|---|
+| **MCP** | `MCPToolCatalog` + `MCPExecutor` + shared `MCPConnection` |
+| **LangGraph** | `AgentWeaveLangGraphNode` / `langgraph_node()` backed by `runtime.preview_route()` |
+| **AutoGen** | `AgentWeaveAutoGenSelector` backed by the public runtime API |
+| **A2A** | discovery/communication substrate + AgentWeave selection/execution |
+| **Custom Python** | `StaticToolCatalog` + `CallableExecutor` or custom protocol implementations |
 
-- **Route before reasoning:** construct a smaller relevant action space before the model call.
-- **Policy and trust first:** apply authorization, placement, trust, provenance, and governance constraints explicitly.
-- **Failure-aware execution:** detect failures, re-rank alternatives, recover, and resume durable workflows.
-- **Auditable evaluation:** keep benchmark protocols, weak results, negative results, and scientific claim boundaries explicit.
+Optional integration installs:
+
+```bash
+pip install 'agentweave-router[mcp]'
+pip install 'agentweave-router[langgraph]'
+pip install 'agentweave-router[autogen]'
+pip install 'agentweave-router[all-integrations]'
+```
+
+Real upstream MCP, LangGraph, and AutoGen packages are installed in a dedicated compatibility CI matrix so adapter drift is caught separately from local test-double coverage.
 
 ## Results at a glance
 
@@ -73,93 +194,6 @@ AgentWeave brings four concerns into one routing layer:
 The BFCL-derived v6 study uses 48 BFCL V4 `multiple` tasks, 16-tool pressure, and a pinned local model. The absolute **12.5% native task success rate** is intentionally retained alongside the relative improvements.
 
 [Reproduce the study](docs/BFCL_REPRODUCE.md) · [Frozen v6 results](BFCL_V6_RESULTS.md) · [Read the paper](https://arxiv.org/abs/2608.23078)
-
-## Start with your stack
-
-| If you use... | Start here |
-|---|---|
-| **MCP / large tool catalogs** | [`docs/MCP_INTEGRATION.md`](docs/MCP_INTEGRATION.md) |
-| **LangGraph** | [`docs/LANGGRAPH_INTEGRATION.md`](docs/LANGGRAPH_INTEGRATION.md) |
-| **AutoGen** | [`docs/AUTOGEN_INTEGRATION.md`](docs/AUTOGEN_INTEGRATION.md) |
-| **A2A agents** | [`docs/A2A_COMPATIBILITY.md`](docs/A2A_COMPATIBILITY.md) |
-| **BFCL-derived evaluation** | [`docs/BFCL_REPRODUCE.md`](docs/BFCL_REPRODUCE.md) |
-| **API compatibility** | [`docs/API_COMPATIBILITY.md`](docs/API_COMPATIBILITY.md) |
-
-## 30-second start
-
-```bash
-git clone https://github.com/sauravsingla/agentweave.git
-cd agentweave
-python -m pip install -e '.[dev]'
-pytest -q
-```
-
-Minimal example:
-
-```python
-import asyncio
-from agentweave import AgentWeave, AgentProfile, Capability, InMemoryA2AAdapter
-
-async def main():
-    bus = InMemoryA2AAdapter()
-    weave = AgentWeave(a2a=bus, db_path=':memory:')
-
-    agent = AgentProfile(
-        'research-1',
-        'Research Agent',
-        [Capability('research', .9, True)],
-    )
-
-    weave.register(agent)
-    bus.register_handler(
-        'research-1',
-        lambda task: {'result': 'evidence-backed finding'},
-    )
-
-    result = await weave.solve(
-        'Research and verify this topic',
-        rounds=1,
-        semantic_verify=True,
-    )
-    print(result)
-
-asyncio.run(main())
-```
-
-Useful CLI commands:
-
-```bash
-agentweave version
-agentweave doctor
-agentweave graph-stats
-agentweave plugins
-agentweave --config agentweave.yaml config-check
-agentweave solve --semantic-verify "Research and verify this topic"
-```
-
-## Core capabilities
-
-- **Pre-inference routing:** construct a smaller model-visible action space before the model call.
-- **Requirement-aware selection:** infer task capabilities and rank matching agents/tools.
-- **Policy and placement:** scopes, jurisdiction, residency, locality, risk tiers, human approval, and tool restrictions.
-- **Contextual trust:** identity, validation, freshness, historical outcomes, governance, and reputation.
-- **Team optimization:** capability coverage, redundancy, diversity, cost, latency, and communication overhead.
-- **A2A interoperability:** external SDK compatibility and protocol-level proof paths.
-- **Runtime recovery:** detect failure, update trust, re-rank alternatives, and fail over.
-- **Durable workflows:** checkpoint multi-step work and resume without replaying completed steps.
-- **Verification and consensus:** contradiction, uncertainty, semantic verification, result validation, and conflict handling.
-- **Observability and auditability:** structured traces, audit events, metrics, and explicit selection evidence.
-
-## Integration model
-
-```text
-MCP       → policy/capability filtering → AgentWeave → model-visible tools
-LangGraph → state → AgentWeave routing node → selected specialists → downstream nodes
-AutoGen   → task → AgentWeave → selected participants → AutoGen execution
-A2A       → discovery/communication substrate → AgentWeave selection + execution
-```
-
-For A2A, the proof suite launches independent upstream SDK agents and exercises discovery and invocation across Python, Go, JavaScript, and Java. **Current proof:** JSON-RPC MUST-level TCK. See [`docs/A2A_COMPATIBILITY.md`](docs/A2A_COMPATIBILITY.md).
 
 ## Research evidence
 
@@ -200,31 +234,27 @@ New router versions are evaluated on newly introduced untouched holdouts and the
 
 The paper-quality evaluation also retains the post-hoc result that simple zero-shot embedding baselines outperform the original frozen AgentWeave router on the already-observed General-AgentBench set.
 
-## Reliability, security, and scale
+## Reliability and security
 
-AgentWeave supports failure detection, trust updates, re-ranking, replacement selection, retry, and durable checkpoint/resume workflows.
+AgentWeave supports failure detection, trust updates, reranking, replacement selection, bounded retry, durable checkpoint/resume workflows, and fail-closed execution authorization.
 
 The proof suite covers malicious Agent Cards, prompt injection, data exfiltration, SSRF/link-local access, tool abuse, spoofing, Sybil/collusion, reputation poisoning, Byzantine disagreement, malformed results, and timeouts. It also exercises Docker isolation, JWT Verifiable Credentials, revocation, key rotation, KMS/HSM boundaries, PostgreSQL concurrency, governance constraints, and chaos scenarios.
 
 A passing proof is evidence for the configured test runtime; it is not a formal security, HA, hardware-attestation, or compliance certification.
 
-Synthetic scalability runs extend to **1,000,000 agents**. Negative measurements are preserved as part of the evidence record.
+## CLI
 
-## Architecture
-
-```mermaid
-flowchart LR
-    C[Tool / agent catalog] --> P[Policy + permission scope]
-    P --> R[AgentWeave routing]
-    R --> S[Small relevant candidate set]
-    S --> E[Existing LLM / agent framework]
-    E --> V[Execution + verification]
-    V -->|failure| R
+```bash
+agentweave version
+agentweave doctor
+agentweave plugins
+agentweave --config agentweave.yaml config-check
+agentweave --config agentweave.yaml run "Research and verify this topic"
 ```
 
-AgentWeave keeps routing as an explicit systems stage rather than embedding selection invisibly inside downstream model reasoning.
+Legacy multi-agent orchestration remains available during the pre-1.0 migration, but new applications should start with `AgentWeaveRuntime` / `AgentWeaveApplication`. See [`docs/API_COMPATIBILITY.md`](docs/API_COMPATIBILITY.md).
 
-## Evidence & documentation
+## Documentation
 
 | Area | Documentation |
 |---|---|
@@ -241,13 +271,11 @@ AgentWeave keeps routing as an explicit systems stage rather than embedding sele
 
 AgentWeave is an **active research and engineering project**. APIs and evaluation protocols may evolve; pin a release or commit when using results in reproducible experiments.
 
-The strongest current evidence is around **pre-inference routing, interoperability, recovery, and reproducible evaluation**. Published benchmark claims remain scoped to their documented models, datasets, protocols, and test environments.
+The strongest current evidence is around pre-inference routing, interoperability, recovery, and reproducible evaluation. Published benchmark claims remain scoped to their documented models, datasets, protocols, and test environments.
 
 ## Contributing
 
-**External reproductions are especially valuable.** If you test AgentWeave on your own MCP server, tool catalog, agent framework, or benchmark, please open an issue or PR with what worked, what failed, and the catalog size.
-
-Contributions are welcome around routing, integrations, benchmark scenarios, security tests, interoperability reports, evaluation datasets, and documentation.
+External reproductions are especially valuable. If you test AgentWeave on your own MCP server, tool catalog, agent framework, or benchmark, please open an issue or PR with what worked, what failed, and the catalog size.
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`SECURITY.md`](SECURITY.md), [`CHANGELOG.md`](CHANGELOG.md), and [`CITATION.cff`](CITATION.cff).
 
