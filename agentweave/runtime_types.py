@@ -59,6 +59,7 @@ class ToolCall:
     provider: str | None = None
     model_name: str | None = None
     tool_key: str | None = None
+    parse_error: str | None = None
     raw: Any = field(default=None, compare=False, repr=False)
 
 
