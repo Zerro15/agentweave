@@ -40,11 +40,13 @@ class HttpA2AAdapter(A2AAdapter):
     Automatic redirects are disabled. Every network hop is validated immediately
     before I/O, redirect targets are revalidated, and an address-set change for the
     same hostname inside one operation is treated as a DNS-rebinding signal when the
-    old and new sets do not overlap.
+    old and new sets do not overlap. Credentials supplied for the initial origin are
+    stripped before a redirect is sent to a different origin.
     """
 
     COMPAT_CODES = {-32601, -32602, -32005}
     REDIRECT_CODES = {307, 308}
+    SENSITIVE_REDIRECT_HEADERS = {"authorization", "cookie", "proxy-authorization"}
 
     def __init__(
         self,
@@ -114,6 +116,13 @@ class HttpA2AAdapter(A2AAdapter):
             raise ValueError("unsafe endpoint: dns-rebinding-detected")
         snapshots[verdict.host] = current if previous is None else previous | current
 
+    @staticmethod
+    def _origin(parsed) -> tuple[str, str, int]:
+        scheme = parsed.scheme.lower()
+        host = (parsed.hostname or "").lower()
+        port = parsed.port or (443 if scheme == "https" else 80)
+        return scheme, host, port
+
     async def _request(
         self,
         client: httpx.AsyncClient,
@@ -125,6 +134,7 @@ class HttpA2AAdapter(A2AAdapter):
     ) -> httpx.Response:
         snapshots = resolution_snapshots if resolution_snapshots is not None else {}
         current_url = url
+        credential_origin = None
         for hop in range(self.max_redirects + 1):
             verdict = self.endpoint_validator.assert_safe_endpoint(
                 current_url,
@@ -136,8 +146,18 @@ class HttpA2AAdapter(A2AAdapter):
             if not host or not verdict.addresses:
                 raise ValueError("unsafe endpoint: endpoint-resolution-failed")
 
+            current_origin = self._origin(parsed)
+            if credential_origin is None:
+                credential_origin = current_origin
+
             request_kwargs = dict(kwargs)
             headers = dict(request_kwargs.pop("headers", {}) or {})
+            if current_origin != credential_origin:
+                headers = {
+                    key: value
+                    for key, value in headers.items()
+                    if key.lower() not in self.SENSITIVE_REDIRECT_HEADERS
+                }
             host_header = host
             if ":" in host and not host.startswith("["):
                 host_header = f"[{host}]"
