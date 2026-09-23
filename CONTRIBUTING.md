@@ -2,6 +2,16 @@
 
 Contributions are welcome across protocol interoperability, trust/identity, agent matching, graph optimization, edge runtimes, security, evaluation and documentation.
 
+## New contributor? Start here
+
+If this is your first AgentWeave contribution, these issues are intentionally bounded so you can learn the codebase without taking on a large subsystem:
+
+- [#57 — Add a multi-MCP collision example with duplicate native tool names](https://github.com/sauravsingla/agentweave/issues/57)
+- [#58 — Add a provider-neutral local runtime example with no external integrations](https://github.com/sauravsingla/agentweave/issues/58)
+- [#59 — Add an examples index with run commands and expected behavior](https://github.com/sauravsingla/agentweave/issues/59)
+
+Comment on the issue if you want to coordinate before starting. For concrete design or usage questions that do not yet belong in an issue, use [GitHub Discussions](https://github.com/sauravsingla/agentweave/discussions) — useful topics include MCP/A2A interoperability, framework integrations, benchmark reproduction, routing behavior and tool-catalog design. Security reports should still follow `SECURITY.md`.
+
 ## Development setup
 
 ```bash
