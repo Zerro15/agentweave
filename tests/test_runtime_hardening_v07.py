@@ -6,6 +6,8 @@ from agentweave import (
     AgentWeaveApplication,
     AgentWeaveRuntime,
     ComponentRegistry,
+    CompositeToolCatalog,
+    KeyPrefixExecutor,
     PluginManager,
     RunContext,
     StaticToolCatalog,
@@ -297,3 +299,66 @@ async def test_application_owns_plugin_and_runtime_lifecycle():
     assert result.status == "completed"
     assert plugin.events == ["configure", "start", "stop"]
     assert runtime._started is False
+
+
+class StartStopProbe:
+    def __init__(self, name, events, *, fail=False):
+        self.name = name
+        self.events = events
+        self.fail = fail
+
+    async def start(self):
+        self.events.append(f"start:{self.name}")
+        if self.fail:
+            raise RuntimeError(f"start-failed:{self.name}")
+
+    async def stop(self):
+        self.events.append(f"stop:{self.name}")
+
+
+@pytest.mark.asyncio
+async def test_runtime_start_rolls_back_partial_startup():
+    events = []
+    runtime = AgentWeaveRuntime(
+        model=StartStopProbe("model", events),
+        catalog=StartStopProbe("catalog", events, fail=True),
+        executor=StartStopProbe("executor", events),
+        router=FirstRouter(),
+    )
+    with pytest.raises(RuntimeError, match="start-failed:catalog"):
+        await runtime.start()
+    assert events == ["start:model", "start:catalog", "stop:model"]
+    assert runtime._started is False
+
+
+@pytest.mark.asyncio
+async def test_composite_catalog_start_rolls_back_partial_startup():
+    events = []
+    catalog = CompositeToolCatalog(
+        [StartStopProbe("one", events), StartStopProbe("two", events, fail=True)]
+    )
+    with pytest.raises(RuntimeError, match="start-failed:two"):
+        await catalog.start()
+    assert events == ["start:one", "start:two", "stop:one"]
+
+
+@pytest.mark.asyncio
+async def test_key_prefix_executor_start_rolls_back_unique_executors():
+    events = []
+    first = StartStopProbe("one", events)
+    second = StartStopProbe("two", events, fail=True)
+    executor = KeyPrefixExecutor({"a:": first, "alias:": first, "b:": second})
+    with pytest.raises(RuntimeError, match="start-failed:two"):
+        await executor.start()
+    assert events == ["start:one", "start:two", "stop:one"]
+
+
+def test_mcp_implicit_source_redacts_query_and_fragment_but_explicit_source_wins():
+    target = "https://Example.COM:8443/mcp?token=top-secret#fragment"
+    implicit = MCPToolCatalog(connection=MCPConnection(target, client_factory=lambda _: None))
+    explicit = MCPToolCatalog(
+        connection=MCPConnection(target, client_factory=lambda _: None), source="logical-source"
+    )
+    assert implicit.source == "https://example.com:8443/mcp"
+    assert "top-secret" not in implicit.source
+    assert explicit.source == "logical-source"

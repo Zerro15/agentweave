@@ -386,15 +386,32 @@ class AgentWeaveRuntime:
         if self._started:
             return
         seen: set[int] = set()
-        for component in (self.model, self.catalog, self.executor, self.search_provider):
-            if component is None or id(component) in seen:
-                continue
-            seen.add(id(component))
-            hook = getattr(component, "start", None)
-            if hook is not None:
+        started: list[Any] = []
+        try:
+            for component in (self.model, self.catalog, self.executor, self.search_provider):
+                if component is None or id(component) in seen:
+                    continue
+                seen.add(id(component))
+                hook = getattr(component, "start", None)
+                if hook is None:
+                    continue
                 result = hook()
                 if inspect.isawaitable(result):
                     await result
+                started.append(component)
+        except BaseException:
+            for component in reversed(started):
+                hook = getattr(component, "stop", None)
+                if hook is None:
+                    continue
+                try:
+                    result = hook()
+                    if inspect.isawaitable(result):
+                        await result
+                except BaseException:
+                    # Preserve the original startup failure while making cleanup best-effort.
+                    pass
+            raise
         self._started = True
 
     async def stop(self) -> None:

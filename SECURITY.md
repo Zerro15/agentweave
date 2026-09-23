@@ -14,7 +14,7 @@ Please include the affected version/commit, threat model, reproducible steps, im
 
 AgentWeave provides policy enforcement, validation and sandbox adapters, but a passing test suite is not a formal security certification. Production deployments should additionally use hardened container/VM runtimes, secret managers, network policy, signed images, workload identity, least-privilege cloud credentials and independent security review appropriate to the environment.
 
-The default endpoint validator permits literal local-development endpoints such as `localhost`, `127.0.0.1`, and `::1`. Production services that accept endpoint input from untrusted users, models, agents, or external metadata should apply explicit host allowlists and network policy so local services are not reachable through untrusted endpoint selection.
+The default endpoint validator permits literal local-development endpoints such as `localhost`, `127.0.0.1`, and `::1` for 0.7 compatibility. Production services that accept endpoint input from untrusted users, models, agents, or external metadata should construct `SecurityValidator(allow_localhost=False)` and apply explicit host allowlists and network policy so local services are not reachable through untrusted endpoint selection.
 
 ## Dependency and release hygiene
 

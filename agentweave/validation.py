@@ -114,17 +114,20 @@ class SecurityValidator:
     """
 
     ALLOWED_BINDINGS = {"JSONRPC", "HTTP+JSON", "HTTP_JSON", "REST", "LOCAL", "EDGE"}
+    LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
     def __init__(
         self,
         *,
         allow_private_network: bool = False,
+        allow_localhost: bool = True,
         allowed_hosts=None,
         require_tls: bool = True,
         attestation_verifier: Callable[[AgentProfile], bool] | None = None,
         resolver: Callable[[str], set[str] | list[str] | tuple[str, ...]] | None = None,
     ):
         self.allow_private_network = allow_private_network
+        self.allow_localhost = allow_localhost
         self.allowed_hosts = set(allowed_hosts or [])
         self.require_tls = require_tls
         self.attestation_verifier = attestation_verifier
@@ -175,7 +178,10 @@ class SecurityValidator:
             problems.append("endpoint-missing-host")
         if parsed.username or parsed.password:
             problems.append("credentials-in-url")
-        if self.require_tls and parsed.scheme != "https" and host not in {"localhost", "127.0.0.1", "::1"}:
+        localhost_allowed = bool(
+            host and self.allow_localhost and host in self.LOCALHOST_HOSTS
+        )
+        if self.require_tls and parsed.scheme != "https" and not localhost_allowed:
             problems.append("endpoint-not-tls")
         if host and self.allowed_hosts and host not in self.allowed_hosts:
             problems.append("host-not-allowlisted")
@@ -189,7 +195,7 @@ class SecurityValidator:
             if require_resolved and not addresses:
                 if "endpoint-resolution-failed" not in problems:
                     problems.append("endpoint-resolution-failed")
-            if not self.allow_private_network and host not in {"localhost", "127.0.0.1", "::1"}:
+            if not self.allow_private_network and not localhost_allowed:
                 if any(self._address_is_private(address) for address in addresses):
                     problems.append("private-network-endpoint")
 

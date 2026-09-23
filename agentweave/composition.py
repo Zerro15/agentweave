@@ -15,12 +15,28 @@ class CompositeToolCatalog:
         self.catalogs = tuple(catalogs)
 
     async def start(self) -> None:
-        for catalog in self.catalogs:
-            hook = getattr(catalog, "start", None)
-            if hook is not None:
+        started: list[CatalogProvider] = []
+        try:
+            for catalog in self.catalogs:
+                hook = getattr(catalog, "start", None)
+                if hook is None:
+                    continue
                 result = hook()
                 if inspect.isawaitable(result):
                     await result
+                started.append(catalog)
+        except BaseException:
+            for catalog in reversed(started):
+                hook = getattr(catalog, "stop", None)
+                if hook is None:
+                    continue
+                try:
+                    result = hook()
+                    if inspect.isawaitable(result):
+                        await result
+                except BaseException:
+                    pass
+            raise
 
     async def stop(self) -> None:
         first_error: Exception | None = None
@@ -88,15 +104,31 @@ class KeyPrefixExecutor:
 
     async def start(self) -> None:
         seen: set[int] = set()
-        for executor in self.routes.values():
-            if id(executor) in seen:
-                continue
-            seen.add(id(executor))
-            hook = getattr(executor, "start", None)
-            if hook is not None:
+        started: list[Executor] = []
+        try:
+            for executor in self.routes.values():
+                if id(executor) in seen:
+                    continue
+                seen.add(id(executor))
+                hook = getattr(executor, "start", None)
+                if hook is None:
+                    continue
                 result = hook()
                 if inspect.isawaitable(result):
                     await result
+                started.append(executor)
+        except BaseException:
+            for executor in reversed(started):
+                hook = getattr(executor, "stop", None)
+                if hook is None:
+                    continue
+                try:
+                    result = hook()
+                    if inspect.isawaitable(result):
+                        await result
+                except BaseException:
+                    pass
+            raise
 
     async def stop(self) -> None:
         seen: set[int] = set()

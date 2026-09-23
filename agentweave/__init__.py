@@ -133,17 +133,45 @@ _LEGACY_MODULES = (
 )
 
 
+_LEGACY_ROOT_INDEX: dict[str, tuple[str, object]] = {}
+_LEGACY_SCANNED_MODULES: set[str] = set()
+
+
+def _index_legacy_module(module_name: str) -> None:
+    module = importlib.import_module(module_name)
+    exported = getattr(module, "__all__", None)
+    names = exported if exported is not None else (
+        attr for attr in vars(module) if not attr.startswith("_")
+    )
+    for attr in names:
+        if attr in globals():
+            continue
+        try:
+            value = getattr(module, attr)
+        except AttributeError:
+            continue
+        _LEGACY_ROOT_INDEX.setdefault(attr, (module_name, value))
+    _LEGACY_SCANNED_MODULES.add(module_name)
+
+
 def __getattr__(name: str):
-    for module_name in _LEGACY_MODULES:
-        module = importlib.import_module(module_name)
-        if hasattr(module, name):
-            value = getattr(module, name)
-            warnings.warn(
-                f"agentweave.{name} is a legacy root import and is not part of the "
-                "pre-1.0 stable surface; import it from its defining module instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            globals()[name] = value
-            return value
+    indexed = _LEGACY_ROOT_INDEX.get(name)
+    if indexed is None:
+        for module_name in _LEGACY_MODULES:
+            if module_name in _LEGACY_SCANNED_MODULES:
+                continue
+            _index_legacy_module(module_name)
+            indexed = _LEGACY_ROOT_INDEX.get(name)
+            if indexed is not None:
+                break
+    if indexed is not None:
+        module_name, value = indexed
+        warnings.warn(
+            f"agentweave.{name} is a legacy root import and is not part of the "
+            f"pre-1.0 stable surface; import it from {module_name} instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        globals()[name] = value
+        return value
     raise AttributeError(f"module 'agentweave' has no attribute {name!r}")

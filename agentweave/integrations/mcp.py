@@ -4,9 +4,25 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import Any, AsyncIterator, Callable, Mapping
+from urllib.parse import urlsplit, urlunsplit
 
 from ..runtime_types import RunContext, ToolCall, ToolResult, ToolSpec
 from ..safe_http import SafeHttpTransport
+
+
+def _default_source(target: Any) -> str:
+    """Return a stable implicit source that cannot expose URL credentials or secrets."""
+
+    if not isinstance(target, str):
+        return "mcp"
+    parsed = urlsplit(target)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return target
+    host = parsed.hostname.lower()
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    netloc = host + (f":{parsed.port}" if parsed.port is not None else "")
+    return urlunsplit((parsed.scheme.lower(), netloc, parsed.path or "/", "", ""))
 
 
 def _dump(value: Any) -> Any:
@@ -165,9 +181,7 @@ class MCPToolCatalog:
         )
         self.provider = self.connection  # backward-compatible attribute
         resolved_target = self.connection.target
-        self.source = source or (
-            resolved_target if isinstance(resolved_target, str) else "mcp"
-        )
+        self.source = source or _default_source(resolved_target)
         self.policy_mapper = policy_mapper
 
     async def start(self) -> None:

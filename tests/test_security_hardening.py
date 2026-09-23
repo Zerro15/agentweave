@@ -160,3 +160,21 @@ async def test_explicit_trusted_and_untrusted_registration_paths(tmp_path):
     trusted = AgentProfile("trusted", "Trusted", [Capability("analysis")])
     weave.register_trusted(trusted, reason="unit-test")
     assert weave.registry.get("trusted") is trusted
+
+
+def test_localhost_policy_is_explicitly_configurable():
+    resolver = lambda host: {"127.0.0.1"}
+
+    compatible = SecurityValidator(resolver=resolver)
+    compatible_verdict = compatible.validate_endpoint(
+        "http://localhost:8000/health", require_resolved=True
+    )
+    assert compatible_verdict.passed is True
+
+    strict = SecurityValidator(allow_localhost=False, resolver=resolver)
+    strict_verdict = strict.validate_endpoint(
+        "http://localhost:8000/health", require_resolved=True
+    )
+    assert strict_verdict.passed is False
+    assert "endpoint-not-tls" in strict_verdict.problems
+    assert "private-network-endpoint" in strict_verdict.problems

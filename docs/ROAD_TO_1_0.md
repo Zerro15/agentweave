@@ -49,7 +49,7 @@ source tests
   -> runtime security/red-team proof
   -> package build + wheel install smoke
   -> release metadata consistency
-  -> immutable tag/release
+  -> immutable published release (repository setting enabled)
 ```
 
 Provider-backed research evidence should not block a patch release for a code/security fix, but 1.0 should not be declared until at least one real-provider reproduction exists.

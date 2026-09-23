@@ -1,0 +1,9 @@
+# Direct runtime/test/tooling constraints for deterministic CI compatibility lanes.
+# Keep project metadata as supported ranges; this file is intentionally CI-only.
+httpx==0.28.1
+jsonschema==4.26.0
+networkx==3.6.1
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.16.8
+mypy==2.3.1
