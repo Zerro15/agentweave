@@ -111,7 +111,14 @@ class PluginManager:
         return dict(self.plugins)
 
     def register(self, name: str, plugin: Any) -> Any:
+        if name in self.plugins:
+            raise ValueError(f"duplicate plugin: {name}")
         plugin = self._validate(name, self._instantiate(plugin))
+        declared_name = str(getattr(plugin, "name", name) or name)
+        if declared_name != name:
+            raise ValueError(
+                f"plugin entry name {name!r} does not match declared name {declared_name!r}"
+            )
         self.plugins[name] = plugin
         return plugin
 
@@ -128,26 +135,48 @@ class PluginManager:
 
     async def start(self, runtime: Any) -> None:
         self.configure()
-        for name, plugin in self.plugins.items():
-            if name in self._started:
-                continue
-            hook = getattr(plugin, "start", None)
-            if hook is not None:
-                result = hook(runtime)
-                if inspect.isawaitable(result):
-                    await result
-            self._started.add(name)
+        started_now: list[str] = []
+        try:
+            for name, plugin in self.plugins.items():
+                if name in self._started:
+                    continue
+                hook = getattr(plugin, "start", None)
+                if hook is not None:
+                    result = hook(runtime)
+                    if inspect.isawaitable(result):
+                        await result
+                self._started.add(name)
+                started_now.append(name)
+        except Exception:
+            for name in reversed(started_now):
+                hook = getattr(self.plugins[name], "stop", None)
+                try:
+                    if hook is not None:
+                        result = hook()
+                        if inspect.isawaitable(result):
+                            await result
+                finally:
+                    self._started.discard(name)
+            raise
 
     async def stop(self) -> None:
+        first_error: Exception | None = None
         for name in reversed(list(self.plugins)):
             if name not in self._started:
                 continue
             hook = getattr(self.plugins[name], "stop", None)
-            if hook is not None:
-                result = hook()
-                if inspect.isawaitable(result):
-                    await result
-            self._started.remove(name)
+            try:
+                if hook is not None:
+                    result = hook()
+                    if inspect.isawaitable(result):
+                        await result
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+            finally:
+                self._started.discard(name)
+        if first_error is not None:
+            raise first_error
 
     def states(self) -> Mapping[str, PluginState]:
         return {
