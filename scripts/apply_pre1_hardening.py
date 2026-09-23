@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def replace_once(path: str, old: str, new: str) -> None:
+    p = Path(path)
+    text = p.read_text()
+    if new in text:
+        return
+    if old not in text:
+        raise SystemExit(f"expected patch anchor not found in {path}: {old[:120]!r}")
+    p.write_text(text.replace(old, new, 1))
+
+
+def append_once(path: str, marker: str, block: str) -> None:
+    p = Path(path)
+    text = p.read_text()
+    if marker in text:
+        return
+    if not text.endswith("\n"):
+        text += "\n"
+    p.write_text(text + block)
+
+
+def write_if_changed(path: str, content: str) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if p.exists() and p.read_text() == content:
+        return
+    p.write_text(content)
+
+
+# 1. Runtime lifecycle is transactional: successful starts are rolled back on failure.
+replace_once(
+    "agentweave/runtime.py",
+    '''    async def start(self) -> None:\n        if self._started:\n            return\n        seen: set[int] = set()\n        for component in (self.model, self.catalog, self.executor, self.search_provider):\n            if component is None or id(component) in seen:\n                continue\n            seen.add(id(component))\n            hook = getattr(component, "start", None)\n            if hook is not None:\n                result = hook()\n                if inspect.isawaitable(result):\n                    await result\n        self._started = True\n''',
+    '''    async def start(self) -> None:\n        if self._started:\n            return\n        seen: set[int] = set()\n        started: list[Any] = []\n        try:\n            for component in (self.model, self.catalog, self.executor, self.search_provider):\n                if component is None or id(component) in seen:\n                    continue\n                seen.add(id(component))\n                hook = getattr(component, "start", None)\n                if hook is None:\n                    continue\n                result = hook()\n                if inspect.isawaitable(result):\n                    await result\n                started.append(component)\n        except BaseException:\n            for component in reversed(started):\n                hook = getattr(component, "stop", None)\n                if hook is None:\n                    continue\n                try:\n                    result = hook()\n                    if inspect.isawaitable(result):\n                        await result\n                except BaseException:\n                    # Preserve the original startup failure while making cleanup best-effort.\n                    pass\n            raise\n        self._started = True\n''',
+)
+
+replace_once(
+    "agentweave/composition.py",
+    '''    async def start(self) -> None:\n        for catalog in self.catalogs:\n            hook = getattr(catalog, "start", None)\n            if hook is not None:\n                result = hook()\n                if inspect.isawaitable(result):\n                    await result\n''',
+    '''    async def start(self) -> None:\n        started: list[CatalogProvider] = []\n        try:\n            for catalog in self.catalogs:\n                hook = getattr(catalog, "start", None)\n                if hook is None:\n                    continue\n                result = hook()\n                if inspect.isawaitable(result):\n                    await result\n                started.append(catalog)\n        except BaseException:\n            for catalog in reversed(started):\n                hook = getattr(catalog, "stop", None)\n                if hook is None:\n                    continue\n                try:\n                    result = hook()\n                    if inspect.isawaitable(result):\n                        await result\n                except BaseException:\n                    pass\n            raise\n''',
+)
+
+replace_once(
+    "agentweave/composition.py",
+    '''    async def start(self) -> None:\n        seen: set[int] = set()\n        for executor in self.routes.values():\n            if id(executor) in seen:\n                continue\n            seen.add(id(executor))\n            hook = getattr(executor, "start", None)\n            if hook is not None:\n                result = hook()\n                if inspect.isawaitable(result):\n                    await result\n''',
+    '''    async def start(self) -> None:\n        seen: set[int] = set()\n        started: list[Executor] = []\n        try:\n            for executor in self.routes.values():\n                if id(executor) in seen:\n                    continue\n                seen.add(id(executor))\n                hook = getattr(executor, "start", None)\n                if hook is None:\n                    continue\n                result = hook()\n                if inspect.isawaitable(result):\n                    await result\n                started.append(executor)\n        except BaseException:\n            for executor in reversed(started):\n                hook = getattr(executor, "stop", None)\n                if hook is None:\n                    continue\n                try:\n                    result = hook()\n                    if inspect.isawaitable(result):\n                        await result\n                except BaseException:\n                    pass\n            raise\n''',
+)
+
+# 2. Make localhost handling explicit while preserving 0.7 local-development behavior.
+replace_once("agentweave/validation.py", '    ALLOWED_BINDINGS = {"JSONRPC", "HTTP+JSON", "HTTP_JSON", "REST", "LOCAL", "EDGE"}\n', '    ALLOWED_BINDINGS = {"JSONRPC", "HTTP+JSON", "HTTP_JSON", "REST", "LOCAL", "EDGE"}\n    LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})\n')
+replace_once("agentweave/validation.py", '        allow_private_network: bool = False,\n        allowed_hosts=None,\n        require_tls: bool = True,\n', '        allow_private_network: bool = False,\n        allow_localhost: bool = True,\n        allowed_hosts=None,\n        require_tls: bool = True,\n')
+replace_once("agentweave/validation.py", '        self.allow_private_network = allow_private_network\n        self.allowed_hosts = set(allowed_hosts or [])\n', '        self.allow_private_network = allow_private_network\n        self.allow_localhost = allow_localhost\n        self.allowed_hosts = set(allowed_hosts or [])\n')
+replace_once("agentweave/validation.py", '        if self.require_tls and parsed.scheme != "https" and host not in {"localhost", "127.0.0.1", "::1"}:\n            problems.append("endpoint-not-tls")\n', '        localhost_allowed = bool(\n            host and self.allow_localhost and host in self.LOCALHOST_HOSTS\n        )\n        if self.require_tls and parsed.scheme != "https" and not localhost_allowed:\n            problems.append("endpoint-not-tls")\n')
+replace_once("agentweave/validation.py", '            if not self.allow_private_network and host not in {"localhost", "127.0.0.1", "::1"}:\n                if any(self._address_is_private(address) for address in addresses):\n                    problems.append("private-network-endpoint")\n', '            if not self.allow_private_network and not localhost_allowed:\n                if any(self._address_is_private(address) for address in addresses):\n                    problems.append("private-network-endpoint")\n')
+
+# 3. Never derive MCP provenance/tool identity from URL query strings or fragments.
+replace_once("agentweave/integrations/mcp.py", 'from typing import Any, AsyncIterator, Callable, Mapping\n', 'from typing import Any, AsyncIterator, Callable, Mapping\nfrom urllib.parse import urlsplit, urlunsplit\n')
+replace_once("agentweave/integrations/mcp.py", '\ndef _dump(value: Any) -> Any:\n', '\ndef _default_source(target: Any) -> str:\n    """Return a stable implicit source that cannot expose URL credentials or secrets."""\n\n    if not isinstance(target, str):\n        return "mcp"\n    parsed = urlsplit(target)\n    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:\n        return target\n    host = parsed.hostname.lower()\n    if ":" in host and not host.startswith("["):\n        host = f"[{host}]"\n    netloc = host + (f":{parsed.port}" if parsed.port is not None else "")\n    return urlunsplit((parsed.scheme.lower(), netloc, parsed.path or "/", "", ""))\n\n\ndef _dump(value: Any) -> Any:\n')
+replace_once("agentweave/integrations/mcp.py", '        self.source = source or (\n            resolved_target if isinstance(resolved_target, str) else "mcp"\n        )\n', '        self.source = source or _default_source(resolved_target)\n')
+
+# 4. Replace repeated legacy-module scans with a one-time lazy compatibility index.
+replace_once(
+    "agentweave/__init__.py",
+    '''\ndef __getattr__(name: str):\n    for module_name in _LEGACY_MODULES:\n        module = importlib.import_module(module_name)\n        if hasattr(module, name):\n            value = getattr(module, name)\n            warnings.warn(\n                f"agentweave.{name} is a legacy root import and is not part of the "\n                "pre-1.0 stable surface; import it from its defining module instead",\n                DeprecationWarning,\n                stacklevel=2,\n            )\n            globals()[name] = value\n            return value\n    raise AttributeError(f"module 'agentweave' has no attribute {name!r}")\n''',
+    '''\n_LEGACY_ROOT_INDEX: dict[str, tuple[str, object]] = {}\n_LEGACY_SCANNED_MODULES: set[str] = set()\n\n\ndef _index_legacy_module(module_name: str) -> None:\n    module = importlib.import_module(module_name)\n    exported = getattr(module, "__all__", None)\n    names = exported if exported is not None else (\n        attr for attr in vars(module) if not attr.startswith("_")\n    )\n    for attr in names:\n        if attr in globals():\n            continue\n        try:\n            value = getattr(module, attr)\n        except AttributeError:\n            continue\n        _LEGACY_ROOT_INDEX.setdefault(attr, (module_name, value))\n    _LEGACY_SCANNED_MODULES.add(module_name)\n\n\ndef __getattr__(name: str):\n    indexed = _LEGACY_ROOT_INDEX.get(name)\n    if indexed is None:\n        for module_name in _LEGACY_MODULES:\n            if module_name in _LEGACY_SCANNED_MODULES:\n                continue\n            _index_legacy_module(module_name)\n            indexed = _LEGACY_ROOT_INDEX.get(name)\n            if indexed is not None:\n                break\n    if indexed is not None:\n        module_name, value = indexed\n        warnings.warn(\n            f"agentweave.{name} is a legacy root import and is not part of the "\n            f"pre-1.0 stable surface; import it from {module_name} instead",\n            DeprecationWarning,\n            stacklevel=2,\n        )\n        globals()[name] = value\n        return value\n    raise AttributeError(f"module 'agentweave' has no attribute {name!r}")\n''',
+)
+
+# 5. Quality tooling and a direct-dependency constraint set for reproducible CI lanes.
+replace_once("pyproject.toml", 'dev = ["pytest>=8", "pytest-asyncio>=0.23"]\n', 'dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.16.8,<0.17", "mypy>=2.3.1,<2.4"]\n')
+append_once("pyproject.toml", "[tool.ruff]", '\n[tool.ruff]\ntarget-version = "py311"\nline-length = 100\n\n[tool.ruff.lint]\nselect = ["E9", "F63", "F7", "F82"]\n\n[tool.mypy]\npython_version = "3.11"\nignore_missing_imports = true\nfollow_imports = "skip"\ncheck_untyped_defs = true\n')
+write_if_changed("constraints/ci.txt", '# Direct runtime/test/tooling constraints for deterministic CI compatibility lanes.\n# Keep project metadata as supported ranges; this file is intentionally CI-only.\nhttpx==0.28.1\njsonschema==4.26.0\nnetworkx==3.6.1\npytest==9.1.1\npytest-asyncio==1.4.0\nruff==0.16.8\nmypy==2.3.1\n')
+
+# 6. Add quality + reproducibility gates without replacing the normal ecosystem-current matrix.
+append_once(".github/workflows/ci.yml", "  quality:\n", '''\n  quality:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5\n      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6\n        with:\n          python-version: '3.11'\n      - run: pip install -c constraints/ci.txt -e .[dev]\n      - name: Ruff correctness gate\n        run: ruff check agentweave agentweave_byom agentweave_security tests\n      - name: Mypy typed-surface gate\n        run: mypy agentweave/runtime_types.py agentweave_security/authorization.py\n\n  reproducible-python:\n    runs-on: ubuntu-latest\n    strategy:\n      fail-fast: false\n      matrix:\n        python-version: ['3.11', '3.14']\n    steps:\n      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5\n      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6\n        with:\n          python-version: ${{ matrix.python-version }}\n      - run: pip install -c constraints/ci.txt -e .[dev]\n      - run: python -m pip check\n      - run: pytest -q tests/test_runtime_hardening_v07.py tests/test_security_hardening.py\n''')
+
+# 7. Exercise the actual built wheel on Python 3.14, independent of editable installs.
+append_once(".github/workflows/package-smoke.yml", "  install-smoke-python314:\n", '''\n  install-smoke-python314:\n    needs: build-wheel\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4\n        with:\n          name: release-wheel\n          path: dist\n      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6\n        with:\n          python-version: '3.14'\n      - name: Install base wheel on Python 3.14\n        run: |\n          python -m venv /tmp/agentweave-smoke-314\n          WHEEL=$(ls dist/*.whl)\n          /tmp/agentweave-smoke-314/bin/pip install "$WHEEL"\n          /tmp/agentweave-smoke-314/bin/python -c 'import agentweave, agentweave_byom, agentweave_security; print(agentweave.__version__)'\n          /tmp/agentweave-smoke-314/bin/agentweave version\n''')
+
+# 8. Make release publication immutable-ready: draft -> upload -> publish, then report repo setting.
+replace_once(".github/workflows/release.yml", '          gh release create "$TAG" dist/* --generate-notes --title "AgentWeave $TAG"\n', '          gh release create "$TAG" --draft --generate-notes --title "AgentWeave $TAG"\n          gh release upload "$TAG" dist/*\n          gh release edit "$TAG" --draft=false\n          IMMUTABLE=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" --jq \'.immutable // false\')\n          if [ "$IMMUTABLE" != "true" ]; then\n            echo "::warning::Repository release immutability is not enabled; enable it in Settings > Releases so future published releases become immutable."\n          fi\n')
+
+# 9. Regression coverage for rollback, localhost strict mode and MCP source redaction.
+replace_once("tests/test_runtime_hardening_v07.py", '    ComponentRegistry,\n', '    ComponentRegistry,\n    CompositeToolCatalog,\n    KeyPrefixExecutor,\n')
+append_once("tests/test_runtime_hardening_v07.py", "async def test_runtime_start_rolls_back_partial_startup():", '''\n\nclass StartStopProbe:\n    def __init__(self, name, events, *, fail=False):\n        self.name = name\n        self.events = events\n        self.fail = fail\n\n    async def start(self):\n        self.events.append(f"start:{self.name}")\n        if self.fail:\n            raise RuntimeError(f"start-failed:{self.name}")\n\n    async def stop(self):\n        self.events.append(f"stop:{self.name}")\n\n\n@pytest.mark.asyncio\nasync def test_runtime_start_rolls_back_partial_startup():\n    events = []\n    runtime = AgentWeaveRuntime(\n        model=StartStopProbe("model", events),\n        catalog=StartStopProbe("catalog", events, fail=True),\n        executor=StartStopProbe("executor", events),\n        router=FirstRouter(),\n    )\n    with pytest.raises(RuntimeError, match="start-failed:catalog"):\n        await runtime.start()\n    assert events == ["start:model", "start:catalog", "stop:model"]\n    assert runtime._started is False\n\n\n@pytest.mark.asyncio\nasync def test_composite_catalog_start_rolls_back_partial_startup():\n    events = []\n    catalog = CompositeToolCatalog(\n        [StartStopProbe("one", events), StartStopProbe("two", events, fail=True)]\n    )\n    with pytest.raises(RuntimeError, match="start-failed:two"):\n        await catalog.start()\n    assert events == ["start:one", "start:two", "stop:one"]\n\n\n@pytest.mark.asyncio\nasync def test_key_prefix_executor_start_rolls_back_unique_executors():\n    events = []\n    first = StartStopProbe("one", events)\n    second = StartStopProbe("two", events, fail=True)\n    executor = KeyPrefixExecutor({"a:": first, "alias:": first, "b:": second})\n    with pytest.raises(RuntimeError, match="start-failed:two"):\n        await executor.start()\n    assert events == ["start:one", "start:two", "stop:one"]\n\n\ndef test_mcp_implicit_source_redacts_query_and_fragment_but_explicit_source_wins():\n    target = "https://Example.COM:8443/mcp?token=top-secret#fragment"\n    implicit = MCPToolCatalog(connection=MCPConnection(target, client_factory=lambda _: None))\n    explicit = MCPToolCatalog(\n        connection=MCPConnection(target, client_factory=lambda _: None), source="logical-source"\n    )\n    assert implicit.source == "https://example.com:8443/mcp"\n    assert "top-secret" not in implicit.source\n    assert explicit.source == "logical-source"\n''')
+append_once("tests/test_security_hardening.py", "def test_localhost_policy_is_explicitly_configurable():", '''\n\ndef test_localhost_policy_is_explicitly_configurable():\n    resolver = lambda host: {"127.0.0.1"}\n\n    compatible = SecurityValidator(resolver=resolver)\n    compatible_verdict = compatible.validate_endpoint(\n        "http://localhost:8000/health", require_resolved=True\n    )\n    assert compatible_verdict.passed is True\n\n    strict = SecurityValidator(allow_localhost=False, resolver=resolver)\n    strict_verdict = strict.validate_endpoint(\n        "http://localhost:8000/health", require_resolved=True\n    )\n    assert strict_verdict.passed is False\n    assert "endpoint-not-tls" in strict_verdict.problems\n    assert "private-network-endpoint" in strict_verdict.problems\n''')
+
+# 10. Document operator/admin controls that cannot be expressed as source code alone.
+replace_once("SECURITY.md", 'The default endpoint validator permits literal local-development endpoints such as `localhost`, `127.0.0.1`, and `::1`. Production services that accept endpoint input from untrusted users, models, agents, or external metadata should apply explicit host allowlists and network policy so local services are not reachable through untrusted endpoint selection.\n', 'The default endpoint validator permits literal local-development endpoints such as `localhost`, `127.0.0.1`, and `::1` for 0.7 compatibility. Production services that accept endpoint input from untrusted users, models, agents, or external metadata should construct `SecurityValidator(allow_localhost=False)` and apply explicit host allowlists and network policy so local services are not reachable through untrusted endpoint selection.\n')
+write_if_changed("docs/REPOSITORY_GOVERNANCE.md", '# Repository governance hardening\n\nThe codebase can enforce build, test, package and release behavior, but two protections are repository-admin settings rather than source-controlled behavior.\n\n## Main branch\n\nProtect `main` (or create an equivalent repository ruleset) and require pull requests plus the `CI` and `Package Installation Smoke` checks before merge. Disallow force-pushes and branch deletion. Keep administrator bypass limited to emergency recovery.\n\n## Release immutability\n\nEnable GitHub release immutability under repository **Settings > Releases**. The release workflow is ordered as draft -> asset upload -> publish so it is compatible with immutable releases. Once enabled, GitHub prevents edits or deletion of future published release assets/tags through the normal release surface.\n\nThese settings should be verified as part of the 1.0 release checklist because they cannot be guaranteed by files committed to the repository.\n')
+road = Path("docs/ROAD_TO_1_0.md")
+if road.exists():
+    text = road.read_text()
+    text = text.replace("immutable tag/release", "immutable published release (repository setting enabled)")
+    road.write_text(text)
+
+# Remove the one-shot patch machinery so it never lands in the PR diff.
+for temporary in ("scripts/apply_pre1_hardening.py", ".github/workflows/pre1-hardening-apply.yml"):
+    p = Path(temporary)
+    if p.exists():
+        p.unlink()
