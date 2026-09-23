@@ -2,6 +2,7 @@ from .byom import BYOMAgentWeave
 from .model_adapters import CallableModelAdapter, ModelAdapter, OpenAICompatibleModelAdapter
 from .tool_routing import (
     AdaptiveRouter,
+    AsyncRouter,
     ConfidencePolicy,
     DeterministicRouterV1,
     Router,
@@ -18,6 +19,7 @@ __all__ = [
     "CallableModelAdapter",
     "OpenAICompatibleModelAdapter",
     "Router",
+    "AsyncRouter",
     "ToolSearchProvider",
     "DeterministicRouterV1",
     "AdaptiveRouter",
