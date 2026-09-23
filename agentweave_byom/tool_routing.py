@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import re
 from dataclasses import dataclass
@@ -45,11 +46,7 @@ class ToolRoutingResult:
 
 @runtime_checkable
 class Router(Protocol):
-    """Provider-neutral routing contract.
-
-    Implementations may be lexical, embedding-based, learned, LLM-backed, or hybrid,
-    but they must return the model-visible set plus decision provenance.
-    """
+    """Provider-neutral synchronous routing contract."""
 
     version: str
 
@@ -63,8 +60,24 @@ class Router(Protocol):
         ...
 
 
+@runtime_checkable
+class AsyncRouter(Protocol):
+    """Provider-neutral asynchronous routing contract."""
+
+    version: str
+
+    async def aroute(
+        self,
+        text: str,
+        tools: Sequence[Mapping[str, Any]],
+        *,
+        max_tools: int = 8,
+    ) -> ToolRoutingResult:
+        ...
+
+
 class ToolSearchProvider(Protocol):
-    """Optional deferred discovery contract used after an uncertain routing decision."""
+    """Deferred discovery contract; ``search`` may be sync or async."""
 
     def search(
         self,
@@ -72,18 +85,13 @@ class ToolSearchProvider(Protocol):
         *,
         excluded_names: set[str],
         limit: int,
-    ) -> Sequence[Mapping[str, Any]]:
+    ) -> Any:
         ...
 
 
 @dataclass(frozen=True)
 class ConfidencePolicy:
-    """Controls when the adaptive router abstains from aggressive pruning.
-
-    ``min_confidence`` is a routing heuristic threshold, not a calibrated probability.
-    The explicit name and provenance field prevent it from being mistaken for a model
-    correctness probability.
-    """
+    """Controls when the adaptive router abstains from aggressive pruning."""
 
     min_confidence: float = 0.50
     expansion_factor: int = 2
@@ -102,7 +110,7 @@ class ConfidencePolicy:
 
 
 class DeterministicRouterV1:
-    """Original AgentWeave deterministic lexical router, now behind a formal interface."""
+    """Original deterministic lexical router behind sync and async contracts."""
 
     version = "agentweave-tool-router-v1"
 
@@ -132,16 +140,16 @@ class DeterministicRouterV1:
             exact_name = 2.0 if name.lower() in text.lower() else 0.0
             score = float(lexical) + capability + exact_name
             scored.append((score, name.lower(), index, tool))
-        return sorted(scored, key=lambda row: (-row[0], row[1], row[2])), query_tokens, capability_tokens
+        return (
+            sorted(scored, key=lambda row: (-row[0], row[1], row[2])),
+            query_tokens,
+            capability_tokens,
+        )
 
     @staticmethod
-    def _confidence(ranked: Sequence[tuple[float, str, int, Mapping[str, Any]]]) -> tuple[float, float]:
-        """Return a bounded ranking-confidence heuristic and top-two margin.
-
-        This deliberately does not claim probabilistic calibration. It provides a
-        stable uncertainty signal that an adaptive policy can use to avoid over-pruning.
-        """
-
+    def _confidence(
+        ranked: Sequence[tuple[float, str, int, Mapping[str, Any]]],
+    ) -> tuple[float, float]:
         if not ranked or ranked[0][0] <= 0:
             return 0.0, 0.0
         top = float(ranked[0][0])
@@ -164,10 +172,17 @@ class DeterministicRouterV1:
         selected_rows = ranked[: min(max_tools, len(ranked))]
         selected_indices = {row[2] for row in selected_rows}
         selected = [row[3] for row in selected_rows]
-        filtered = [tool for index, tool in enumerate(catalog) if index not in selected_indices]
+        filtered = [
+            tool for index, tool in enumerate(catalog) if index not in selected_indices
+        ]
         confidence, margin = self._confidence(ranked)
         catalog_fingerprint = hashlib.sha256(
-            json.dumps(catalog, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+            json.dumps(
+                catalog,
+                sort_keys=True,
+                default=str,
+                separators=(",", ":"),
+            ).encode("utf-8")
         ).hexdigest()
         req = self.analyzer.analyze(text)
         provenance = {
@@ -194,21 +209,24 @@ class DeterministicRouterV1:
             abstained=False,
         )
 
+    async def aroute(
+        self,
+        text: str,
+        tools: Sequence[Mapping[str, Any]],
+        *,
+        max_tools: int = 8,
+    ) -> ToolRoutingResult:
+        return self.route(text, tools, max_tools=max_tools)
+
 
 class AdaptiveRouter:
-    """Confidence-aware wrapper that abstains from over-pruning uncertain requests.
-
-    Low-confidence decisions expand the model-visible candidate set. If a search
-    provider is configured, deferred discovery is attempted before the enlarged set is
-    finalized. Policy/authorization must remain outside this relevance router so search
-    can never grant execution permission by itself.
-    """
+    """Confidence-aware wrapper with sync and async deferred-discovery paths."""
 
     version = "agentweave-adaptive-router-v1"
 
     def __init__(
         self,
-        base_router: Router | None = None,
+        base_router: Router | AsyncRouter | None = None,
         *,
         confidence_policy: ConfidencePolicy | None = None,
         search_provider: ToolSearchProvider | None = None,
@@ -231,75 +249,108 @@ class AdaptiveRouter:
                 seen.add(name)
         return merged
 
-    def route(
+    @staticmethod
+    def _confident(
+        initial: ToolRoutingResult,
+        *,
+        base_router: Any,
+        policy: ConfidencePolicy,
+        max_tools: int,
+    ) -> ToolRoutingResult:
+        provenance = dict(initial.provenance)
+        provenance.update(
+            {
+                "router": AdaptiveRouter.version,
+                "base_router": getattr(
+                    base_router,
+                    "version",
+                    type(base_router).__name__,
+                ),
+                "adaptive_decision": "confident-prune",
+                "confidence_threshold": policy.min_confidence,
+                "initial_budget": max_tools,
+                "final_budget": len(initial.selected),
+                "search_invoked": False,
+            }
+        )
+        return ToolRoutingResult(
+            selected=initial.selected,
+            filtered=initial.filtered,
+            provenance=provenance,
+            confidence=initial.confidence,
+            abstained=False,
+        )
+
+    @staticmethod
+    def _expanded_budget(
+        catalog_size: int,
+        max_tools: int,
+        policy: ConfidencePolicy,
+    ) -> int:
+        return max(
+            1,
+            min(
+                catalog_size if catalog_size else max_tools,
+                max(max_tools + 1, max_tools * policy.expansion_factor),
+                policy.max_abstention_tools,
+            ),
+        )
+
+    def _sync_base(
         self,
         text: str,
         tools: Sequence[Mapping[str, Any]],
         *,
-        max_tools: int = 8,
+        max_tools: int,
     ) -> ToolRoutingResult:
-        if max_tools < 1:
-            raise ValueError("max_tools must be at least 1")
-        catalog = list(tools)
-        initial = self.base_router.route(text, catalog, max_tools=max_tools)
-        policy = self.confidence_policy
+        method = getattr(self.base_router, "route", None)
+        if method is None:
+            raise TypeError("async-only base router requires AdaptiveRouter.aroute()")
+        result = method(text, tools, max_tools=max_tools)
+        if inspect.isawaitable(result):
+            raise TypeError("async base router requires AdaptiveRouter.aroute()")
+        return result
 
-        if initial.confidence >= policy.min_confidence:
-            provenance = dict(initial.provenance)
-            provenance.update(
-                {
-                    "router": self.version,
-                    "base_router": getattr(self.base_router, "version", type(self.base_router).__name__),
-                    "adaptive_decision": "confident-prune",
-                    "confidence_threshold": policy.min_confidence,
-                    "initial_budget": max_tools,
-                    "final_budget": len(initial.selected),
-                    "search_invoked": False,
-                }
-            )
-            return ToolRoutingResult(
-                selected=initial.selected,
-                filtered=initial.filtered,
-                provenance=provenance,
-                confidence=initial.confidence,
-                abstained=False,
-            )
-
-        expanded_budget = min(
-            len(catalog) if catalog else max_tools,
-            max(max_tools + 1, max_tools * policy.expansion_factor),
-            policy.max_abstention_tools,
+    async def _async_base(
+        self,
+        text: str,
+        tools: Sequence[Mapping[str, Any]],
+        *,
+        max_tools: int,
+    ) -> ToolRoutingResult:
+        method = getattr(self.base_router, "aroute", None) or getattr(
+            self.base_router, "route", None
         )
-        expanded_budget = max(1, expanded_budget)
-        search_invoked = False
-        discovered_count = 0
-        working_catalog = catalog
+        if method is None:
+            raise TypeError("base router must define route() or aroute()")
+        result = method(text, tools, max_tools=max_tools)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
 
-        if self.search_provider is not None:
-            search_invoked = True
-            discovered = list(
-                self.search_provider.search(
-                    text,
-                    excluded_names={tool_name(t).lower() for t in catalog},
-                    limit=policy.search_limit,
-                )
-                or []
-            )
-            discovered_count = len(discovered)
-            working_catalog = self._merge_catalog(catalog, discovered)
-            expanded_budget = min(
-                max(expanded_budget, max_tools + discovered_count),
-                len(working_catalog),
-                policy.max_abstention_tools,
-            )
-
-        expanded = self.base_router.route(text, working_catalog, max_tools=expanded_budget)
+    @staticmethod
+    def _finalize_expanded(
+        expanded: ToolRoutingResult,
+        *,
+        initial: ToolRoutingResult,
+        base_router: Any,
+        policy: ConfidencePolicy,
+        max_tools: int,
+        search_invoked: bool,
+        discovered_count: int,
+    ) -> ToolRoutingResult:
         provenance = dict(expanded.provenance)
         provenance.update(
             {
-                "router": self.version,
-                "base_router": getattr(self.base_router, "version", type(self.base_router).__name__),
-                "adaptive_decision": "abstain-search-expand" if search_invoked else "abstain-expand",
+                "router": AdaptiveRouter.version,
+                "base_router": getattr(
+                    base_router,
+                    "version",
+                    type(base_router).__name__,
+                ),
+                "adaptive_decision": (
+                    "abstain-search-expand" if search_invoked else "abstain-expand"
+                ),
                 "confidence_threshold": policy.min_confidence,
                 "initial_confidence": initial.confidence,
                 "final_confidence": expanded.confidence,
@@ -319,7 +370,121 @@ class AdaptiveRouter:
             abstained=True,
         )
 
+    def route(
+        self,
+        text: str,
+        tools: Sequence[Mapping[str, Any]],
+        *,
+        max_tools: int = 8,
+    ) -> ToolRoutingResult:
+        if max_tools < 1:
+            raise ValueError("max_tools must be at least 1")
+        catalog = list(tools)
+        initial = self._sync_base(text, catalog, max_tools=max_tools)
+        policy = self.confidence_policy
+        if initial.confidence >= policy.min_confidence:
+            return self._confident(
+                initial,
+                base_router=self.base_router,
+                policy=policy,
+                max_tools=max_tools,
+            )
 
-# Backward compatibility: existing users importing ToolRouter keep the original
-# deterministic behavior, while new code can opt into AdaptiveRouter explicitly.
+        expanded_budget = self._expanded_budget(len(catalog), max_tools, policy)
+        search_invoked = False
+        discovered_count = 0
+        working_catalog = catalog
+        if self.search_provider is not None:
+            discovered = self.search_provider.search(
+                text,
+                excluded_names={tool_name(t).lower() for t in catalog},
+                limit=policy.search_limit,
+            )
+            if inspect.isawaitable(discovered):
+                raise TypeError(
+                    "async search provider requires await AdaptiveRouter.aroute(...)"
+                )
+            search_invoked = True
+            discovered_list = list(discovered or [])
+            discovered_count = len(discovered_list)
+            working_catalog = self._merge_catalog(catalog, discovered_list)
+            expanded_budget = min(
+                max(expanded_budget, max_tools + discovered_count),
+                len(working_catalog),
+                policy.max_abstention_tools,
+            )
+
+        expanded = self._sync_base(
+            text,
+            working_catalog,
+            max_tools=expanded_budget,
+        )
+        return self._finalize_expanded(
+            expanded,
+            initial=initial,
+            base_router=self.base_router,
+            policy=policy,
+            max_tools=max_tools,
+            search_invoked=search_invoked,
+            discovered_count=discovered_count,
+        )
+
+    async def aroute(
+        self,
+        text: str,
+        tools: Sequence[Mapping[str, Any]],
+        *,
+        max_tools: int = 8,
+    ) -> ToolRoutingResult:
+        if max_tools < 1:
+            raise ValueError("max_tools must be at least 1")
+        catalog = list(tools)
+        initial = await self._async_base(text, catalog, max_tools=max_tools)
+        policy = self.confidence_policy
+        if initial.confidence >= policy.min_confidence:
+            return self._confident(
+                initial,
+                base_router=self.base_router,
+                policy=policy,
+                max_tools=max_tools,
+            )
+
+        expanded_budget = self._expanded_budget(len(catalog), max_tools, policy)
+        search_invoked = False
+        discovered_count = 0
+        working_catalog = catalog
+        if self.search_provider is not None:
+            discovered = self.search_provider.search(
+                text,
+                excluded_names={tool_name(t).lower() for t in catalog},
+                limit=policy.search_limit,
+            )
+            if inspect.isawaitable(discovered):
+                discovered = await discovered
+            search_invoked = True
+            discovered_list = list(discovered or [])
+            discovered_count = len(discovered_list)
+            working_catalog = self._merge_catalog(catalog, discovered_list)
+            expanded_budget = min(
+                max(expanded_budget, max_tools + discovered_count),
+                len(working_catalog),
+                policy.max_abstention_tools,
+            )
+
+        expanded = await self._async_base(
+            text,
+            working_catalog,
+            max_tools=expanded_budget,
+        )
+        return self._finalize_expanded(
+            expanded,
+            initial=initial,
+            base_router=self.base_router,
+            policy=policy,
+            max_tools=max_tools,
+            search_invoked=search_invoked,
+            discovered_count=discovered_count,
+        )
+
+
 ToolRouter = DeterministicRouterV1
