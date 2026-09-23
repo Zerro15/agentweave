@@ -1,21 +1,48 @@
 # API Compatibility Policy
 
-AgentWeave uses Semantic Versioning for the Python package.
+AgentWeave uses Semantic Versioning for the Python distribution.
 
-## Stable surface
+## Distribution and import names
 
-The primary supported surface is the set of classes exported from `agentweave.__init__` plus `AgentWeaveSDK`. Additive methods and optional parameters may be introduced in minor releases. Backward-incompatible changes to that stable surface require a major version change unless the existing behavior is demonstrably unsafe.
+The distribution name is `agentweave-router` while the Python import package remains `agentweave`:
 
-`AgentWeaveSDK.API_VERSION` identifies the high-level SDK contract independently from the package release number.
+```bash
+pip install agentweave-router
+```
+
+```python
+import agentweave
+```
+
+This avoids the unrelated `agentweave` distribution name on PyPI without forcing application imports to change.
+
+## Pre-1.0 stable root surface
+
+Before 1.0, the explicitly supported root surface is the curated `agentweave.__all__` list. It is intentionally small and centered on:
+
+- `AgentWeave` and `AgentWeaveRuntime`;
+- normalized runtime contracts such as `ToolSpec`, `ToolCall`, `ToolResult`, `ModelResponse`, `RunContext`, and `RuntimeResult`;
+- runtime builder/configuration contracts;
+- catalog/executor/scope/search interfaces;
+- `SafeHttpTransport`;
+- typed plugin contracts.
+
+The goal is to keep integrations independent from internal matcher, graph, persistence, benchmark, transport-proof, and evaluation implementation details.
+
+## Legacy root imports
+
+Historical names such as `AgentProfile`, `Capability`, `InMemoryA2AAdapter`, benchmark helpers, and lower-level engines remain resolvable from the package root through compatibility shims during the pre-1.0 migration. They emit `DeprecationWarning` because they are not part of the new stable root promise.
+
+New code should either use the canonical runtime surface or import advanced/experimental classes from their defining submodule.
 
 ## Experimental surface
 
-Implementation-detail modules, internal helper functions, CI scripts and generated benchmark artifacts may evolve in minor releases. Experimental APIs should not be relied upon without pinning a package version.
+Implementation-detail modules, CI scripts, research/evaluation code, proof harnesses, generated benchmark artifacts, and advanced protocol helpers may evolve in minor releases. Pin a package version if depending directly on them.
 
 ## Deprecation
 
-Where practical, public APIs are deprecated for at least one minor release before removal. Deprecation notices should name the replacement and target removal release.
+Where practical, behavior that was previously public remains available for at least one migration window and emits a deprecation notice naming the preferred surface. Unsafe behavior may be changed without preserving an insecure compatibility path.
 
 ## Protocol compatibility
 
-A2A behavior is versioned independently from AgentWeave. Protocol clients should advertise/accept the A2A version appropriate to the remote Agent Card and validate conformance with the official A2A TCK where possible.
+A2A and MCP protocol compatibility are versioned independently from AgentWeave. Integrations should advertise/accept the protocol version appropriate to the remote endpoint and validate against upstream conformance tools where applicable.
