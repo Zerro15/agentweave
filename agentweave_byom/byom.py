@@ -5,14 +5,16 @@ from typing import Any, Mapping, Sequence
 from agentweave.orchestrator import AgentWeave
 
 from .model_adapters import ModelAdapter
-from .tool_routing import ToolRouter
+from .tool_routing import AdaptiveRouter, DeterministicRouterV1, Router
 
 
 class BYOMAgentWeave(AgentWeave):
     """AgentWeave with a user-supplied model and tool catalog.
 
-    This extension preserves the frozen core package and adds a model-agnostic
-    ``run`` path for function/tool-calling applications.
+    The default BYOM path is confidence-aware: a deterministic lexical router provides
+    reproducible ranking, while ``AdaptiveRouter`` avoids aggressive pruning when the
+    ranking is uncertain. Callers may inject any implementation of the ``Router``
+    protocol without changing their model adapter.
     """
 
     def __init__(
@@ -20,13 +22,15 @@ class BYOMAgentWeave(AgentWeave):
         *args: Any,
         model: ModelAdapter | None = None,
         tools: Sequence[Mapping[str, Any]] | None = None,
-        tool_router: ToolRouter | None = None,
+        tool_router: Router | None = None,
         **kwargs: Any,
     ):
         super().__init__(*args, **kwargs)
         self.model = model
         self.tools = list(tools or [])
-        self.tool_router = tool_router or ToolRouter(self.analyzer)
+        self.tool_router: Router = tool_router or AdaptiveRouter(
+            DeterministicRouterV1(self.analyzer)
+        )
 
     def set_model(self, model: ModelAdapter) -> "BYOMAgentWeave":
         self.model = model
@@ -36,6 +40,10 @@ class BYOMAgentWeave(AgentWeave):
         self.tools = list(tools)
         return self
 
+    def set_router(self, router: Router) -> "BYOMAgentWeave":
+        self.tool_router = router
+        return self
+
     def route_tools(
         self,
         text: str,
@@ -43,7 +51,11 @@ class BYOMAgentWeave(AgentWeave):
         tools: Sequence[Mapping[str, Any]] | None = None,
         max_tools: int = 8,
     ):
-        return self.tool_router.route(text, self.tools if tools is None else tools, max_tools=max_tools)
+        return self.tool_router.route(
+            text,
+            self.tools if tools is None else tools,
+            max_tools=max_tools,
+        )
 
     async def run(
         self,
@@ -68,6 +80,8 @@ class BYOMAgentWeave(AgentWeave):
             model=active_model.identity,
             tools_before=len(active_tools),
             tools_after=len(routing.selected),
+            routing_confidence=routing.confidence,
+            routing_abstained=routing.abstained,
         ):
             response = await active_model.complete(
                 model_messages,
@@ -79,6 +93,8 @@ class BYOMAgentWeave(AgentWeave):
         provenance["model_adapter"] = active_model.identity
         self.observability.audit.record("tool-routing.completed", payload=provenance)
         self.observability.metrics.inc("model_invocations_total", model=active_model.identity)
+        if routing.abstained:
+            self.observability.metrics.inc("routing_abstentions_total")
 
         return {
             "status": "completed",
@@ -86,6 +102,8 @@ class BYOMAgentWeave(AgentWeave):
             "response": response,
             "selected_tools": routing.selected,
             "filtered_tools": routing.filtered,
+            "routing_confidence": routing.confidence,
+            "routing_abstained": routing.abstained,
             "routing_provenance": provenance,
             "observability": self.observability.snapshot(),
         }
