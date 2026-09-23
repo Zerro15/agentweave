@@ -16,6 +16,7 @@ class ToolSpec:
     id: str | None = None
     provider: str | None = None
     source: str | None = None
+    model_name: str | None = None
     risk_level: str = "standard"
     permissions: frozenset[str] = frozenset()
     scopes: frozenset[str] = frozenset()
@@ -27,14 +28,23 @@ class ToolSpec:
 
     @property
     def key(self) -> str:
-        return self.id or self.name
+        """Stable runtime identity; independent from the model-visible function name."""
+        if self.id:
+            return str(self.id)
+        parts = [self.provider or "tool", self.source or "local", self.name]
+        return ":".join(str(part) for part in parts)
+
+    @property
+    def exposed_name(self) -> str:
+        """Function name shown to the model."""
+        return self.model_name or self.name
 
     def to_function_tool(self) -> dict[str, Any]:
         """Return an OpenAI-compatible function-tool descriptor."""
         return {
             "type": "function",
             "function": {
-                "name": self.name,
+                "name": self.exposed_name,
                 "description": self.description,
                 "parameters": dict(self.input_schema),
             },
@@ -47,6 +57,8 @@ class ToolCall:
     arguments: Mapping[str, Any] = field(default_factory=dict)
     id: str | None = None
     provider: str | None = None
+    model_name: str | None = None
+    tool_key: str | None = None
     raw: Any = field(default=None, compare=False, repr=False)
 
 
@@ -58,6 +70,8 @@ class ToolResult:
     content: Any = None
     structured_content: Any = None
     error: str | None = None
+    model_name: str | None = None
+    tool_key: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     raw: Any = field(default=None, compare=False, repr=False)
 
@@ -95,6 +109,56 @@ class RunContext:
 
 
 @dataclass(frozen=True)
+class RuntimeStageEvent:
+    stage: str
+    duration_ms: float
+    outcome: str = "ok"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RuntimeTelemetry:
+    """Per-run runtime telemetry without coupling AgentWeave to one exporter."""
+
+    events: list[RuntimeStageEvent] = field(default_factory=list)
+
+    def record(
+        self,
+        stage: str,
+        duration_ms: float,
+        *,
+        outcome: str = "ok",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.events.append(
+            RuntimeStageEvent(
+                stage=stage,
+                duration_ms=float(duration_ms),
+                outcome=outcome,
+                metadata=dict(metadata or {}),
+            )
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        totals: dict[str, float] = {}
+        for event in self.events:
+            totals[event.stage] = totals.get(event.stage, 0.0) + event.duration_ms
+        return {
+            "events": [
+                {
+                    "stage": event.stage,
+                    "duration_ms": event.duration_ms,
+                    "outcome": event.outcome,
+                    "metadata": dict(event.metadata),
+                }
+                for event in self.events
+            ],
+            "stage_totals_ms": totals,
+            "total_ms": sum(event.duration_ms for event in self.events),
+        }
+
+
+@dataclass(frozen=True)
 class RuntimeResult:
     status: str
     response: ModelResponse | None
@@ -104,3 +168,4 @@ class RuntimeResult:
     routing_abstained: bool = False
     recovery_attempts: int = 0
     provenance: Mapping[str, Any] = field(default_factory=dict)
+    telemetry: Mapping[str, Any] = field(default_factory=dict)
