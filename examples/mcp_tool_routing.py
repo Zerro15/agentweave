@@ -1,120 +1,54 @@
-"""Route an MCP tool catalog with AgentWeave before exposing tools to a model.
+"""Route a real MCP server's tool catalog with AgentWeave.
 
-This example intentionally works on plain MCP `tools/list`-style dictionaries so it does
-not require an MCP transport/runtime. It demonstrates the integration boundary:
+Run an MCP server first, then:
 
-MCP tool catalog -> AgentWeave router -> smaller model-visible MCP tool catalog
+    pip install -e '.[mcp]'
+    python examples/mcp_tool_routing.py \
+      --url http://localhost:8000/mcp \
+      --query 'Search the codebase for the router implementation'
 
-Run from the repository root after installing the study routing dependency:
-
-    pip install -e .
-    pip install 'sentence-transformers>=5.1,<6'
-    python examples/mcp_tool_routing.py
+This example uses the production MCPToolCatalog and production adaptive router. The
+matching MCPExecutor is what AgentWeaveRuntime uses after model selection and
+authorization; no benchmark proxy is involved in this integration path.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import argparse
+import asyncio
 
-from scripts.bfcl_routing_proxy import Router
-
-
-def mcp_to_router_tool(tool: dict[str, Any]) -> dict[str, Any]:
-    """Adapt an MCP tool descriptor to the router's function-tool shape."""
-    return {
-        "type": "function",
-        "function": {
-            "name": tool["name"],
-            "description": tool.get("description", ""),
-            "parameters": tool.get("inputSchema", {"type": "object", "properties": {}}),
-        },
-        "_mcp_original": tool,
-    }
+from agentweave import RunContext
+from agentweave.integrations.mcp import MCPExecutor, MCPToolCatalog
+from agentweave_byom import AdaptiveRouter, DeterministicRouterV1
 
 
-def route_mcp_tools(
-    user_text: str,
-    tools: list[dict[str, Any]],
-    *,
-    max_provider_groups: int = 3,
-    max_tools: int = 6,
-) -> list[dict[str, Any]]:
-    """Return the exact MCP tool descriptors selected for model exposure."""
-    adapted = [mcp_to_router_tool(tool) for tool in tools]
-    router = Router(
-        "agentweave",
-        max_agents=max_provider_groups,
-        max_tools=max_tools,
+async def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--url", default="http://localhost:8000/mcp")
+    parser.add_argument("--query", required=True)
+    parser.add_argument("--max-tools", type=int, default=6)
+    args = parser.parse_args()
+
+    catalog = MCPToolCatalog(args.url)
+    executor = MCPExecutor(args.url)  # used by AgentWeaveRuntime for actual tool calls
+    assert executor is not None
+
+    tools = await catalog.list_tools(RunContext())
+    router = AdaptiveRouter(DeterministicRouterV1())
+    routing = await router.aroute(
+        args.query,
+        [tool.to_function_tool() for tool in tools],
+        max_tools=args.max_tools,
     )
-    selected = router.select([{"role": "user", "content": user_text}], adapted)
-    return [tool["_mcp_original"] for tool in selected]
 
-
-def main() -> None:
-    # Representative MCP `tools/list` descriptors. A real client would use the list
-    # returned by its connected MCP servers.
-    tools = [
-        {
-            "name": "github_search_code",
-            "description": "Search source code in GitHub repositories.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {"query": {"type": "string"}},
-                "required": ["query"],
-            },
-        },
-        {
-            "name": "github_create_issue",
-            "description": "Create a GitHub issue in a repository.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "repository": {"type": "string"},
-                    "title": {"type": "string"},
-                },
-                "required": ["repository", "title"],
-            },
-        },
-        {
-            "name": "calendar_find_events",
-            "description": "Find calendar events in a date range.",
-            "inputSchema": {"type": "object", "properties": {}},
-        },
-        {
-            "name": "calendar_create_event",
-            "description": "Create a calendar event.",
-            "inputSchema": {"type": "object", "properties": {}},
-        },
-        {
-            "name": "gmail_search_messages",
-            "description": "Search email messages.",
-            "inputSchema": {"type": "object", "properties": {}},
-        },
-        {
-            "name": "gmail_send_message",
-            "description": "Send an email message.",
-            "inputSchema": {"type": "object", "properties": {}},
-        },
-        {
-            "name": "weather_forecast",
-            "description": "Get a weather forecast for a location.",
-            "inputSchema": {"type": "object", "properties": {}},
-        },
-        {
-            "name": "maps_search_places",
-            "description": "Search for nearby places and businesses.",
-            "inputSchema": {"type": "object", "properties": {}},
-        },
-    ]
-
-    request = "Open an issue in the AgentWeave GitHub repository about routing provenance."
-    selected = route_mcp_tools(request, tools, max_provider_groups=3, max_tools=4)
-
-    print(f"Source MCP tools: {len(tools)}")
-    print(f"Model-visible tools after AgentWeave routing: {len(selected)}")
-    for tool in selected:
-        print(f"- {tool['name']}: {tool.get('description', '')}")
+    print(f"MCP tools discovered: {len(tools)}")
+    print(f"Model-visible tools after AgentWeave routing: {len(routing.selected)}")
+    print(f"Routing confidence: {routing.confidence:.3f}")
+    print(f"Abstained from aggressive pruning: {routing.abstained}")
+    for tool in routing.selected:
+        function = tool["function"]
+        print(f"- {function['name']}: {function.get('description', '')}")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
