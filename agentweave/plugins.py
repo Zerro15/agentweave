@@ -114,11 +114,6 @@ class PluginManager:
         if name in self.plugins:
             raise ValueError(f"duplicate plugin: {name}")
         plugin = self._validate(name, self._instantiate(plugin))
-        declared_name = str(getattr(plugin, "name", name) or name)
-        if declared_name != name:
-            raise ValueError(
-                f"plugin entry name {name!r} does not match declared name {declared_name!r}"
-            )
         self.plugins[name] = plugin
         return plugin
 
