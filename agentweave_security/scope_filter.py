@@ -19,6 +19,7 @@ class ScopeContext:
 @dataclass(frozen=True)
 class ScopedTool:
     name: str
+    key: str | None = None
     roles: frozenset[str] = frozenset()
     tenants: frozenset[str] = frozenset()
     permissions: frozenset[str] = frozenset()
@@ -27,12 +28,17 @@ class ScopedTool:
     audience: frozenset[str] = frozenset()
     metadata: Mapping[str, object] | None = None
 
+    @property
+    def identity(self) -> str:
+        return self.key or self.name
+
 
 @dataclass(frozen=True)
 class ScopeDecision:
     tool: str
     allowed: bool
     reason_code: str
+    tool_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +84,7 @@ def _stable_hash(value: object) -> str:
 
 def _tool_record(tool: ScopedTool) -> dict:
     return {
+        "key": tool.identity,
         "name": tool.name,
         "roles": sorted(tool.roles),
         "tenants": sorted(tool.tenants),
@@ -116,27 +123,38 @@ class StaticScopeFilter:
         self.policy_version = policy_version
 
     def decide(self, tool: ScopedTool, context: ScopeContext) -> ScopeDecision:
+        def decision(allowed: bool, reason: str) -> ScopeDecision:
+            return ScopeDecision(tool.name, allowed, reason, tool.identity)
+
         if tool.roles and context.role not in tool.roles:
-            return ScopeDecision(tool.name, False, "role_not_allowed")
+            return decision(False, "role_not_allowed")
         if tool.tenants and context.tenant not in tool.tenants:
-            return ScopeDecision(tool.name, False, "tenant_not_allowed")
+            return decision(False, "tenant_not_allowed")
         if tool.environments and context.environment not in tool.environments:
-            return ScopeDecision(tool.name, False, "environment_not_allowed")
+            return decision(False, "environment_not_allowed")
         if tool.permissions and not tool.permissions.issubset(context.permissions):
-            return ScopeDecision(tool.name, False, "missing_permission")
+            return decision(False, "missing_permission")
         if tool.scopes and not tool.scopes.issubset(context.scopes):
-            return ScopeDecision(tool.name, False, "missing_scope")
+            return decision(False, "missing_scope")
         if tool.audience:
-            audience_values = {value for value in (context.role, context.tenant, context.environment) if value}
+            audience_values = {
+                value
+                for value in (context.role, context.tenant, context.environment)
+                if value
+            }
             if tool.audience.isdisjoint(audience_values):
-                return ScopeDecision(tool.name, False, "audience_mismatch")
-        return ScopeDecision(tool.name, True, "allowed")
+                return decision(False, "audience_mismatch")
+        return decision(True, "allowed")
 
     def filter(self, tools: Iterable[ScopedTool], context: ScopeContext) -> ScopeFilterResult:
         source = tuple(tools)
         decisions = tuple(self.decide(tool, context) for tool in source)
-        allowed_names = {decision.tool for decision in decisions if decision.allowed}
-        allowed = tuple(tool for tool in source if tool.name in allowed_names)
+        allowed_keys = {
+            decision.tool_key or decision.tool
+            for decision in decisions
+            if decision.allowed
+        }
+        allowed = tuple(tool for tool in source if tool.identity in allowed_keys)
         provenance = ScopeProvenance(
             source_catalog_hash=catalog_hash(source),
             source_catalog_size=len(source),
@@ -156,11 +174,7 @@ def apply_policy_then_optional_routing(
     router: ToolRouter | None = None,
     router_version: str | None = None,
 ) -> PolicyRoutingResult:
-    """Apply deterministic policy first; route only the permitted subset.
-
-    This makes dynamic routing optional and guarantees policy-denied tools never
-    reach the router or the model-visible set.
-    """
+    """Apply deterministic policy first; route only the permitted subset."""
     filtered = scope_filter.filter(tools, context)
     policy_tools = filtered.tools
 
@@ -174,15 +188,17 @@ def apply_policy_then_optional_routing(
         )
 
     routed = tuple(router(policy_tools))
-    permitted_names = {tool.name for tool in policy_tools}
-    if any(tool.name not in permitted_names for tool in routed):
+    permitted_keys = {tool.identity for tool in policy_tools}
+    if any(tool.identity not in permitted_keys for tool in routed):
         raise ValueError("router returned a tool excluded by deterministic scope policy")
 
     provenance = ScopeProvenance(
-        **{**asdict(filtered.provenance),
-           "routed_catalog_hash": catalog_hash(routed),
-           "routed_catalog_size": len(routed),
-           "router_version": router_version or "unspecified"}
+        **{
+            **asdict(filtered.provenance),
+            "routed_catalog_hash": catalog_hash(routed),
+            "routed_catalog_size": len(routed),
+            "router_version": router_version or "unspecified",
+        }
     )
     return PolicyRoutingResult(
         policy_tools=policy_tools,
