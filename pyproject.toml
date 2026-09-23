@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentweave-router"
-version = "0.6.0"
+version = "0.7.0"
 description = "Pre-inference routing for tool-rich LLMs and multi-agent systems with MCP, A2A, LangGraph, AutoGen, policy-aware routing, recovery, and reproducible evaluation."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -44,6 +44,7 @@ classifiers = [
 ]
 dependencies = [
   "httpx>=0.27",
+  "jsonschema>=4.23",
   "networkx>=3.2",
 ]
 
