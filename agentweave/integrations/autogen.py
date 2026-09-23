@@ -38,17 +38,12 @@ class AgentWeaveAutoGenSelector:
         *,
         context: RunContext | None = None,
     ) -> list[str]:
-        original_max_tools = self.runtime.max_tools
-        try:
-            self.runtime.max_tools = self.max_participants
-            preview = await self.runtime.preview_route(
-                task,
-                context=context or RunContext(),
-                tools=self._participant_tools(),
-            )
-        finally:
-            self.runtime.max_tools = original_max_tools
-        return [tool.name for tool in preview.selected]
+        preview = await self.runtime.preview_route(
+            task,
+            context=context or RunContext(),
+            tools=self._participant_tools(),
+        )
+        return [tool.name for tool in preview.selected[: self.max_participants]]
 
     async def selector_func(self, messages: Sequence[Any]) -> str | None:
         """AutoGen-style async selector callback returning the next participant name."""
