@@ -67,6 +67,52 @@ async def test_redirect_target_is_revalidated_and_private_redirect_is_blocked():
 
 
 @pytest.mark.asyncio
+async def test_cross_origin_redirect_does_not_forward_sensitive_headers():
+    def resolver(host):
+        return {
+            "public.example": {"93.184.216.34"},
+            "other.example": {"93.184.216.35"},
+        }[host]
+
+    validator = SecurityValidator(resolver=resolver)
+    adapter = HttpA2AAdapter(endpoint_validator=validator, max_redirects=2)
+    client = _Client(
+        [
+            _Response(307, {"location": "https://other.example/rpc"}),
+            _Response(200),
+        ]
+    )
+
+    await adapter._request(
+        client,
+        "POST",
+        "https://public.example/rpc",
+        headers={
+            "Authorization": "Bearer top-secret",
+            "Cookie": "session=top-secret",
+            "Proxy-Authorization": "Basic top-secret",
+            "X-Request-ID": "req-1",
+        },
+        json={},
+    )
+
+    assert len(client.calls) == 2
+    first_request, _ = client.calls[0]
+    second_request, _ = client.calls[1]
+    first_headers = first_request[2]["headers"]
+    second_headers = second_request[2]["headers"]
+    assert first_headers["Authorization"] == "Bearer top-secret"
+    assert first_headers["Cookie"] == "session=top-secret"
+    assert first_headers["Proxy-Authorization"] == "Basic top-secret"
+    assert not any(
+        key.lower() in {"authorization", "cookie", "proxy-authorization"}
+        for key in second_headers
+    )
+    assert second_headers["X-Request-ID"] == "req-1"
+    assert second_headers["Host"] == "other.example"
+
+
+@pytest.mark.asyncio
 async def test_dns_rebinding_address_change_is_blocked_before_second_request():
     answers = iter([{"93.184.216.34"}, {"169.254.169.254"}])
 
