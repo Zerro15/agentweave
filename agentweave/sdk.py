@@ -6,12 +6,65 @@ import json
 import platform
 import shutil
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 from .config import RuntimeConfig, RuntimeFactory
 from .plugins import PluginManager
 
-AgentWeaveConfig = RuntimeConfig
+
+@dataclass
+class AgentWeaveConfig:
+    """Backward-compatible flat configuration for the legacy orchestration CLI.
+
+    New plug-and-play runtime applications should use ``RuntimeConfig``.  This class is
+    intentionally retained through the pre-1.0 transition so existing JSON/YAML config
+    files continue to load without requiring model/catalog runtime sections.
+    """
+
+    db_path: str = "agentweave.db"
+    max_agents: int = 5
+    rounds: int = 2
+    use_native: bool = True
+    require_signed_cards: bool = False
+    settings: dict = field(default_factory=dict)
+
+    @classmethod
+    def load(cls, path):
+        source = Path(path)
+        text = source.read_text()
+        if source.suffix.lower() in {".yaml", ".yml"}:
+            try:
+                import yaml
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Install YAML support with: pip install 'agentweave-router[yaml]'"
+                ) from exc
+            data = yaml.safe_load(text) or {}
+        else:
+            data = json.loads(text)
+        if not isinstance(data, dict):
+            raise ValueError("legacy AgentWeave config must be an object")
+        payload = dict(data)
+        known = {
+            key: payload.pop(key)
+            for key in list(payload)
+            if key in cls.__dataclass_fields__ and key != "settings"
+        }
+        explicit_settings = payload.pop("settings", None)
+        settings = dict(explicit_settings or {})
+        settings.update(payload)
+        return cls(**known, settings=settings)
+
+    def to_dict(self):
+        return {
+            "db_path": self.db_path,
+            "max_agents": self.max_agents,
+            "rounds": self.rounds,
+            "use_native": self.use_native,
+            "require_signed_cards": self.require_signed_cards,
+            **self.settings,
+        }
 
 
 class AgentWeaveSDK:
@@ -105,7 +158,8 @@ async def _run_cli(args):
         print(json.dumps(asdict(result), indent=2, default=str))
         return 0
 
-    weave = AgentWeave()
+    legacy_cfg = AgentWeaveConfig.load(args.config) if args.config else AgentWeaveConfig()
+    weave = AgentWeave(db_path=legacy_cfg.db_path, use_native=legacy_cfg.use_native)
     weave.registry.load_persisted()
     if args.command == "agents":
         print(
@@ -121,8 +175,8 @@ async def _run_cli(args):
             json.dumps(
                 await weave.solve(
                     args.requirement,
-                    max_agents=args.max_agents,
-                    rounds=args.rounds,
+                    max_agents=args.max_agents or legacy_cfg.max_agents,
+                    rounds=args.rounds or legacy_cfg.rounds,
                     semantic_verify=args.semantic_verify,
                 ),
                 indent=2,
@@ -153,8 +207,8 @@ def main(argv=None):
     solve = sub.add_parser("solve")
     solve.add_argument("requirement")
     solve.add_argument("--semantic-verify", action="store_true")
-    solve.add_argument("--max-agents", type=int, default=5)
-    solve.add_argument("--rounds", type=int, default=2)
+    solve.add_argument("--max-agents", type=int)
+    solve.add_argument("--rounds", type=int)
 
     run = sub.add_parser("run")
     run.add_argument("requirement")
