@@ -1,0 +1,52 @@
+name: Integration Compatibility
+
+on:
+  push:
+    paths:
+      - 'agentweave/integrations/**'
+      - 'agentweave/runtime.py'
+      - 'agentweave/runtime_types.py'
+      - 'pyproject.toml'
+      - 'tests/test_upstream_integration_compat.py'
+      - '.github/workflows/integration-compat.yml'
+  pull_request:
+    paths:
+      - 'agentweave/integrations/**'
+      - 'agentweave/runtime.py'
+      - 'agentweave/runtime_types.py'
+      - 'pyproject.toml'
+      - 'tests/test_upstream_integration_compat.py'
+      - '.github/workflows/integration-compat.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: mcp
+            extra: mcp
+            test: mcp_upstream
+          - name: langgraph
+            extra: langgraph
+            test: langgraph_upstream
+          - name: autogen
+            extra: autogen
+            test: autogen_upstream
+    name: ${{ matrix.name }} upstream
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - name: Install AgentWeave plus upstream integration
+        run: pip install -e ".[dev,${{ matrix.extra }}]"
+      - name: Show resolved upstream versions
+        run: python -m pip freeze | grep -Ei '^(mcp|langgraph|autogen-agentchat|autogen-core)='
+      - name: Run upstream compatibility smoke
+        run: pytest -q tests/test_upstream_integration_compat.py -k '${{ matrix.test }}'
