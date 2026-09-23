@@ -1,20 +1,19 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any, Mapping, Sequence
 
 from agentweave.orchestrator import AgentWeave
 
 from .model_adapters import ModelAdapter
-from .tool_routing import AdaptiveRouter, DeterministicRouterV1, Router
+from .tool_routing import AdaptiveRouter, AsyncRouter, DeterministicRouterV1, Router
 
 
 class BYOMAgentWeave(AgentWeave):
     """AgentWeave with a user-supplied model and tool catalog.
 
-    The default BYOM path is confidence-aware: a deterministic lexical router provides
-    reproducible ranking, while ``AdaptiveRouter`` avoids aggressive pruning when the
-    ranking is uncertain. Callers may inject any implementation of the ``Router``
-    protocol without changing their model adapter.
+    The default BYOM path is confidence-aware and now supports both synchronous and
+    asynchronous routers/search providers without changing model-adapter code.
     """
 
     def __init__(
@@ -22,13 +21,13 @@ class BYOMAgentWeave(AgentWeave):
         *args: Any,
         model: ModelAdapter | None = None,
         tools: Sequence[Mapping[str, Any]] | None = None,
-        tool_router: Router | None = None,
+        tool_router: Router | AsyncRouter | None = None,
         **kwargs: Any,
     ):
         super().__init__(*args, **kwargs)
         self.model = model
         self.tools = list(tools or [])
-        self.tool_router: Router = tool_router or AdaptiveRouter(
+        self.tool_router = tool_router or AdaptiveRouter(
             DeterministicRouterV1(self.analyzer)
         )
 
@@ -40,7 +39,7 @@ class BYOMAgentWeave(AgentWeave):
         self.tools = list(tools)
         return self
 
-    def set_router(self, router: Router) -> "BYOMAgentWeave":
+    def set_router(self, router: Router | AsyncRouter) -> "BYOMAgentWeave":
         self.tool_router = router
         return self
 
@@ -51,11 +50,38 @@ class BYOMAgentWeave(AgentWeave):
         tools: Sequence[Mapping[str, Any]] | None = None,
         max_tools: int = 8,
     ):
-        return self.tool_router.route(
+        method = getattr(self.tool_router, "route", None)
+        if method is None:
+            raise TypeError("async-only router requires await route_tools_async(...)")
+        result = method(
             text,
             self.tools if tools is None else tools,
             max_tools=max_tools,
         )
+        if inspect.isawaitable(result):
+            raise TypeError("async router requires await route_tools_async(...)")
+        return result
+
+    async def route_tools_async(
+        self,
+        text: str,
+        *,
+        tools: Sequence[Mapping[str, Any]] | None = None,
+        max_tools: int = 8,
+    ):
+        method = getattr(self.tool_router, "aroute", None) or getattr(
+            self.tool_router, "route", None
+        )
+        if method is None:
+            raise TypeError("router must define route() or aroute()")
+        result = method(
+            text,
+            self.tools if tools is None else tools,
+            max_tools=max_tools,
+        )
+        if inspect.isawaitable(result):
+            result = await result
+        return result
 
     async def run(
         self,
@@ -72,7 +98,11 @@ class BYOMAgentWeave(AgentWeave):
             raise ValueError("No model configured. Pass model=... or call set_model(...).")
 
         active_tools = self.tools if tools is None else list(tools)
-        routing = self.tool_router.route(text, active_tools, max_tools=max_tools)
+        routing = await self.route_tools_async(
+            text,
+            tools=active_tools,
+            max_tools=max_tools,
+        )
         model_messages = list(messages or [{"role": "user", "content": text}])
 
         with self.observability.tracer.span(
