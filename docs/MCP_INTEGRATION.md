@@ -1,59 +1,93 @@
-# MCP tool-routing integration example
+# MCP integration
 
-AgentWeave can sit between an MCP tool catalog and the model-facing tool list.
-
-The integration boundary is:
+AgentWeave now provides a first-class MCP runtime boundary rather than only a descriptor-routing example.
 
 ```text
-MCP tools/list response
-        ↓
-AgentWeave pre-inference routing
-        ↓
-smaller model-visible MCP tool set
-        ↓
-model tool selection / invocation
+MCP server
+   ↓
+MCPToolCatalog.list_tools()
+   ↓
+ToolSpec normalization
+   ↓
+AgentWeave scope policy
+   ↓
+AgentWeave routing
+   ↓
+model-visible tools
+   ↓
+model ToolCall
+   ↓
+authorization gate
+   ↓
+MCPExecutor.call_tool()
+   ↓
+ToolResult normalization
 ```
 
-This does **not** change MCP tool schemas or invocation semantics. It only selects which already-discovered tools are exposed to the model for a given request.
-
-## Why this is useful
-
-MCP servers can expose many tools. A client may want to keep discovery broad while reducing the model-visible action space before inference.
-
-The example in [`examples/mcp_tool_routing.py`](../examples/mcp_tool_routing.py) consumes plain MCP `tools/list`-style descriptors (`name`, `description`, and `inputSchema`), adapts them to AgentWeave's existing routed-function representation, and returns the exact original MCP tool descriptors selected for exposure.
-
-## Run it
-
-From the repository root:
+## Install
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-pip install 'sentence-transformers>=5.1,<6'
-python examples/mcp_tool_routing.py
+pip install 'agentweave-router[mcp]'
 ```
 
-The example is local and does not require an MCP server, API key, or model. It demonstrates the catalog-routing boundary only.
+The Python import package remains `agentweave`.
 
-## Real client wiring
+## Catalog and executor
 
-A real MCP client can use the same pattern:
+```python
+from agentweave import AgentWeaveRuntime, RunContext
+from agentweave.integrations.mcp import MCPExecutor, MCPToolCatalog
+from agentweave_byom import OpenAICompatibleModelAdapter
 
-1. discover tools from one or more MCP servers;
-2. collect the returned tool descriptors;
-3. call `route_mcp_tools(user_text, tools)`;
-4. expose only the returned descriptors to the model;
-5. execute any chosen tool through the normal MCP client path.
+url = 'http://localhost:8000/mcp'
+model = OpenAICompatibleModelAdapter(
+    model='my-model',
+    base_url='http://localhost:8001/v1',
+)
 
-The selected descriptors are returned unchanged, so the router does not rewrite their names, descriptions, or input schemas.
+runtime = AgentWeaveRuntime(
+    model=model,
+    catalog=MCPToolCatalog(url),
+    executor=MCPExecutor(url),
+)
 
-## Provenance
+result = await runtime.run(
+    'Search the codebase for the routing implementation',
+    context=RunContext(),
+)
+```
 
-For production use, pair this pattern with the routing-provenance design tracked in [Issue #22](https://github.com/sauravsingla/agentweave/issues/22): record the source catalog identity, routing policy/version/configuration, selected model-visible tool set, resulting tool call, and execution result.
+`MCPToolCatalog` uses the MCP client contract to list and paginate tools and normalizes them to `ToolSpec`. `MCPExecutor` executes normalized `ToolCall` values through the MCP client and converts results to `ToolResult`.
 
-The goal is to make it possible to distinguish between a tool that was available but not chosen by the model and a tool that was filtered out before inference.
+## Security ordering
+
+MCP discovery does not grant permission to execute a tool. The canonical runtime ordering is:
+
+1. discover the source catalog;
+2. apply deterministic role / tenant / permission / scope filtering;
+3. route only the permitted set;
+4. expose the selected set to the model;
+5. normalize the model tool call;
+6. authorize the selected action again immediately before execution;
+7. execute with `MCPExecutor` only after an explicit allow;
+8. reroute/recover on bounded execution failure.
+
+Deferred discovery is also re-screened through scope policy before any newly discovered tool can become model-visible.
+
+## Routing-only example
+
+[`examples/mcp_tool_routing.py`](../examples/mcp_tool_routing.py) connects to a real MCP server, lists its tools through `MCPToolCatalog`, and runs the production adaptive router. It no longer imports the BFCL benchmark routing proxy.
+
+```bash
+python examples/mcp_tool_routing.py \
+  --url http://localhost:8000/mcp \
+  --query 'Open an issue about routing provenance'
+```
+
+## HTTP trust boundary
+
+For HTTP MCP targets, AgentWeave validates the target before handing the session to the MCP SDK. AgentWeave-owned HTTP integrations use `SafeHttpTransport`, which applies endpoint validation, DNS pinning/rebinding checks, guarded redirects, Host/SNI preservation, and cross-origin credential stripping.
 
 ## Evidence boundary
 
-This example is an ecosystem integration pattern, not a benchmark result. It does not imply official MCP endorsement or any change to the MCP protocol.
+MCP support is a runtime/integration feature. It does not modify frozen BFCL-derived artifacts and should not be described as official MCP endorsement or benchmark evidence.
