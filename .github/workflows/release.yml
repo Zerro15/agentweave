@@ -89,7 +89,7 @@ jobs:
         with:
           name: python-distributions
           path: dist/
-      - name: Create immutable GitHub release
+      - name: Create non-overwriting GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
