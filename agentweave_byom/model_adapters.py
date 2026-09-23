@@ -4,7 +4,7 @@ import inspect
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Mapping, Sequence
 
-import httpx
+from agentweave.safe_http import SafeHttpTransport
 
 
 class ModelAdapter(ABC):
@@ -44,7 +44,12 @@ class CallableModelAdapter(ModelAdapter):
 
 
 class OpenAICompatibleModelAdapter(ModelAdapter):
-    """Adapter for OpenAI-compatible chat-completions endpoints."""
+    """Adapter for OpenAI-compatible chat-completions endpoints.
+
+    AgentWeave-owned HTTP calls always pass through ``SafeHttpTransport`` so the same
+    redirect, DNS-rebinding, credential-forwarding and endpoint policy is applied to
+    model gateways as to discovery and marketplace HTTP traffic.
+    """
 
     def __init__(
         self,
@@ -54,12 +59,14 @@ class OpenAICompatibleModelAdapter(ModelAdapter):
         api_key: str | None = None,
         headers: Mapping[str, str] | None = None,
         timeout: float = 120.0,
+        transport: SafeHttpTransport | None = None,
     ):
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.headers = dict(headers or {})
         self.timeout = timeout
+        self.transport = transport or SafeHttpTransport(timeout=timeout)
 
     @property
     def identity(self) -> str:
@@ -76,11 +83,10 @@ class OpenAICompatibleModelAdapter(ModelAdapter):
         }
         if tools is not None:
             payload["tools"] = [dict(t) for t in tools]
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                headers=headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()
+        response = await self.transport.post(
+            f"{self.base_url}/chat/completions",
+            headers=headers,
+            json=payload,
+        )
+        response.raise_for_status()
+        return response.json()
