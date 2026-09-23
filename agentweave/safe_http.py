@@ -25,7 +25,7 @@ class SafeHttpTransport:
     def __init__(
         self,
         *,
-        timeout: float = 30.0,
+        timeout: float | None = 30.0,
         endpoint_validator: SecurityValidator | None = None,
         max_redirects: int = 3,
     ) -> None:
@@ -67,9 +67,15 @@ class SafeHttpTransport:
         *,
         client: httpx.AsyncClient | None = None,
         resolution_snapshots: dict[str, set[str]] | None = None,
+        stream_response: bool = False,
         **kwargs: Any,
     ) -> httpx.Response:
         own_client = client is None
+        if own_client and stream_response:
+            raise ValueError(
+                "stream_response=True requires a caller-owned AsyncClient so the "
+                "response can remain open while it is consumed"
+            )
         active_client = client or httpx.AsyncClient(
             timeout=self.timeout,
             follow_redirects=False,
@@ -139,6 +145,7 @@ class SafeHttpTransport:
                         response = await active_client.send(
                             request,
                             follow_redirects=False,
+                            stream=stream_response,
                         )
                         break
                     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
@@ -155,11 +162,14 @@ class SafeHttpTransport:
                 if not location:
                     return response
                 if not self._redirect_allowed(method, response.status_code):
+                    await response.aclose()
                     raise RuntimeError(
                         f"Refusing redirect status {response.status_code} for {method}"
                     )
                 if hop >= self.max_redirects:
+                    await response.aclose()
                     raise RuntimeError("HTTP redirect limit exceeded")
+                await response.aclose()
                 current_url = urljoin(current_url, location)
             raise RuntimeError("HTTP redirect limit exceeded")
         finally:
@@ -171,3 +181,6 @@ class SafeHttpTransport:
 
     async def post(self, url: str, **kwargs: Any) -> httpx.Response:
         return await self.request("POST", url, **kwargs)
+
+    async def delete(self, url: str, **kwargs: Any) -> httpx.Response:
+        return await self.request("DELETE", url, **kwargs)
