@@ -111,7 +111,13 @@ async def test_runtime_enforces_scope_route_authorize_execute_order():
     assert executed == [7]
     assert [item.name for item in result.tool_results] == ["read_record"]
     first_turn = result.provenance["turns"][0]
-    assert first_turn["selected_tools"] == ["read_record"]
+    assert first_turn["selected_tools"] == [
+        {
+            "key": "tool:local:read_record",
+            "name": "read_record",
+            "model_name": "read_record",
+        }
+    ]
     decisions = first_turn["routing"]["scope"]["decisions"]
     assert any(
         item["tool"] == "admin_delete"
