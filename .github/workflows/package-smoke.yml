@@ -5,12 +5,14 @@ on:
     paths:
       - 'agentweave/**'
       - 'agentweave_byom/**'
+      - 'agentweave_security/**'
       - 'pyproject.toml'
       - '.github/workflows/package-smoke.yml'
   pull_request:
     paths:
       - 'agentweave/**'
       - 'agentweave_byom/**'
+      - 'agentweave_security/**'
       - 'pyproject.toml'
       - '.github/workflows/package-smoke.yml'
   workflow_dispatch:
@@ -63,8 +65,11 @@ jobs:
           /tmp/agentweave-smoke/bin/python - <<'PY'
           import agentweave
           from agentweave import AgentWeaveApplication, AgentWeaveRuntime, ToolSpec
+          from agentweave_byom import OpenAICompatibleModelAdapter
+          from agentweave_security.authorization import AuthorizationDecision
           print(agentweave.__version__)
           assert AgentWeaveApplication and AgentWeaveRuntime and ToolSpec
+          assert OpenAICompatibleModelAdapter and AuthorizationDecision
           PY
           /tmp/agentweave-smoke/bin/agentweave version
       - name: Verify selected integration import
