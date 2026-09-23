@@ -4,18 +4,35 @@ All notable changes to AgentWeave are documented here. The project follows Seman
 
 ## [Unreleased]
 
-### Added
-- Router holdout evaluation artifacts and workflows covering the V2-V7 research iterations.
-- Untouched-generalization, recovery-stress, deferred-tool-search and paper-quality evaluation assets.
-- Focused MCP, LangGraph, AutoGen, A2A compatibility and bring-your-own-model documentation and examples.
-- A documentation landing page for AgentWeave's pre-inference routing, function-calling and multi-agent use cases.
-
-### Changed
-- Project positioning and package metadata now consistently describe AgentWeave as a pre-inference routing layer for tool-rich LLM and multi-agent systems.
-- Citation metadata now includes the project author identity and research-paper linkage.
-
 ### Planned
 - Additional independently hosted A2A endpoints and physical edge-hardware evidence as environments become available.
+- Additional production-provider integration fixtures and external reproductions.
+
+## [0.7.0] - 2026-09-23
+
+### Added
+- Canonical `AgentWeaveRuntime` pipeline: catalog → deterministic scope → routing → model → schema validation → authorization → execution → bounded recovery.
+- Provider-neutral `ToolSpec`, `ToolCall`, `ToolResult`, `ModelResponse`, `RunContext`, `RuntimeResult`, and runtime telemetry contracts.
+- Canonical tool identity separate from model-visible function aliases, preventing silent cross-provider name collapse.
+- JSON Schema validation before authorization/execution and argument-aware authorization context/hooks.
+- First-class MCP catalog/executor integration with reusable shared session lifecycle and policy metadata mapping.
+- First-class LangGraph and AutoGen adapters backed only by the public runtime API.
+- Centralized `SafeHttpTransport` across AgentWeave-owned HTTP integrations.
+- Typed runtime configuration, builder/factory, versioned plugin component registry, and lifecycle-owned `AgentWeaveApplication`.
+- Real upstream MCP, LangGraph, and AutoGen compatibility CI in addition to local test doubles.
+- Confidence-aware adaptive routing, abstention/deferred search, and the controlled hybrid-selection evaluation.
+
+### Changed
+- Distribution name is `agentweave-router`; Python imports remain `agentweave`.
+- Public root API is curated; historical root imports remain as pre-1.0 compatibility shims with deprecation warnings.
+- Deferred discovery candidates are re-scoped before routing/model exposure.
+- Tool execution recovery tracks canonical tool identity rather than display name.
+- Runtime and plugin lifecycles are idempotent and fail safely on partial startup.
+
+### Security
+- Mandatory Agent Card payload binding and explicit trusted/untrusted registration boundaries.
+- Redirect/DNS-rebinding SSRF hardening and cross-origin credential stripping for AgentWeave-owned HTTP traffic.
+- Model-hallucinated, schema-invalid, scope-denied, and authorization-denied calls fail closed before the executor.
 
 ## [0.6.0] - 2026-08-25
 
