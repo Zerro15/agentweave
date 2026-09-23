@@ -9,7 +9,8 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .config import RuntimeConfig, RuntimeFactory
+from .application import AgentWeaveApplication
+from .config import RuntimeConfig
 from .plugins import PluginManager
 
 
@@ -153,8 +154,8 @@ async def _run_cli(args):
     if args.command == "run":
         if not args.config:
             raise SystemExit("--config is required for run")
-        runtime = RuntimeFactory.from_file(args.config)
-        result = await runtime.run(args.requirement)
+        app = AgentWeaveApplication.from_file(args.config)
+        result = await app.run(args.requirement)
         print(json.dumps(asdict(result), indent=2, default=str))
         return 0
 
