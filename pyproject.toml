@@ -53,6 +53,8 @@ Homepage = "https://sauravsingla.github.io/agentweave/"
 Repository = "https://github.com/sauravsingla/agentweave"
 Documentation = "https://sauravsingla.github.io/agentweave/"
 "Research Paper" = "https://arxiv.org/abs/2608.23078"
+"Software DOI" = "https://doi.org/10.5281/zenodo.22913460"
+"Software Archive" = "https://zenodo.org/records/22913460"
 Issues = "https://github.com/sauravsingla/agentweave/issues"
 Changelog = "https://github.com/sauravsingla/agentweave/blob/main/CHANGELOG.md"
 
