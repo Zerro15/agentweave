@@ -99,11 +99,11 @@ def main() -> None:
             "CITATION.cff repository-artifact does not match the archived Zenodo record"
         )
         assert expected_doi in cff_text, "CITATION.cff is missing the version DOI identifier"
-        assert _contains_identifier(codemeta.get("identifier"), expected_doi_url), (
-            "codemeta.json identifier does not match the archived version DOI"
-        )
-        assert project_urls.get("Software DOI") == expected_doi_url, (
-            "pyproject.toml Software DOI does not match the archived version DOI"
+        assert _contains_identifier(codemeta.get("identifier"), expected_doi_url) or _contains_identifier(
+            codemeta.get("sameAs"), expected_doi_url
+        ), "codemeta.json must expose the archived version DOI"
+        assert project_urls.get("Version DOI") == expected_doi_url, (
+            "pyproject.toml Version DOI does not match the archived version DOI"
         )
         assert project_urls.get("Software Archive") == expected_record_url, (
             "pyproject.toml Software Archive does not match the archived Zenodo record"
@@ -130,14 +130,14 @@ def main() -> None:
         )
 
     concept_doi = archive_registry.get("concept_doi")
-    if concept_doi:
-        concept_doi_url = f"https://doi.org/{concept_doi}"
-        assert project_urls.get("Concept DOI") == concept_doi_url, (
-            "pyproject.toml Concept DOI must expose the stable DOI for the evolving project"
-        )
-        assert _contains_identifier(codemeta.get("sameAs"), concept_doi_url) or _contains_identifier(
-            codemeta.get("identifier"), concept_doi_url
-        ), "codemeta.json must expose the Concept DOI for the evolving project"
+    assert concept_doi, "docs/zenodo_releases.json must contain the Zenodo Concept DOI"
+    concept_doi_url = f"https://doi.org/{concept_doi}"
+    assert project_urls.get("Concept DOI") == concept_doi_url, (
+        "pyproject.toml Concept DOI must expose the stable DOI for the evolving project"
+    )
+    assert _contains_identifier(codemeta.get("identifier"), concept_doi_url), (
+        "codemeta.json identifier must use the Concept DOI for the evolving project"
+    )
 
     print("Release metadata consistent:", json.dumps(versions, sort_keys=True))
 
