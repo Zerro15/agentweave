@@ -30,40 +30,13 @@ jobs:
         run: |
           pip install -e '.[dev,all-integrations]'
           pytest -q tests/test_upstream_integration_compat.py tests/test_mcp_real_e2e.py
-      - name: Verify release version metadata
+      - name: Verify release metadata and Zenodo identifiers
         run: |
-          python - <<'PY'
-          import pathlib
-          import re
-          import tomllib
-
-          pyproject = tomllib.loads(pathlib.Path('pyproject.toml').read_text())
-          package_version = pyproject['project']['version']
-
-          init_text = pathlib.Path('agentweave/__init__.py').read_text()
-          init_match = re.search(r"^__version__\s*=\s*['\"]([^'\"]+)['\"]", init_text, re.M)
-          assert init_match, 'agentweave.__version__ not found'
-          init_version = init_match.group(1)
-
-          cff_text = pathlib.Path('CITATION.cff').read_text()
-          cff_match = re.search(r'^version:\s*([^\s]+)\s*$', cff_text, re.M)
-          assert cff_match, 'CITATION.cff version not found'
-          cff_version = cff_match.group(1).strip("\"'")
-
-          assert package_version == init_version == cff_version, (
-              f'version mismatch: pyproject={package_version}, '
-              f'agentweave.__version__={init_version}, CITATION.cff={cff_version}'
-          )
-
-          ref = '${{ github.ref }}'
-          if ref.startswith('refs/tags/'):
-              tag = '${{ github.ref_name }}'
-              assert tag == 'v' + package_version, (
-                  f'tag {tag} does not match package v{package_version}'
-              )
-
-          print(f'Version metadata consistent: {package_version}')
-          PY
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            python scripts/check_release_metadata.py --tag "$GITHUB_REF_NAME"
+          else
+            python scripts/check_release_metadata.py
+          fi
       - name: Build distributions
         run: python -m build
       - name: Validate distributions
