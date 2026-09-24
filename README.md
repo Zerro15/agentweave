@@ -4,6 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/agentweave-router.svg)](https://pypi.org/project/agentweave-router/)
 [![Python](https://img.shields.io/pypi/pyversions/agentweave-router.svg)](https://pypi.org/project/agentweave-router/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22913460.svg)](https://doi.org/10.5281/zenodo.22913460)
 
 **Pre-inference routing and secure execution for tool-rich LLM and multi-agent systems.**
 
@@ -16,7 +17,7 @@ AgentWeave reduces the tools or agents visible to a model before inference while
 **70.18% fewer tools exposed · 61.70% fewer input tokens · 50.95% lower mean local-model latency**  
 **MCP · A2A · LangGraph · AutoGen · policy-aware routing · recovery · reproducible evaluation**
 
-**Quick links:** [30-second start](#30-second-start) · [Canonical runtime](#canonical-runtime) · [Results](#results-at-a-glance) · [0.7 quickstart](docs/QUICKSTART_0_7.md) · [MCP](docs/MCP_INTEGRATION.md) · [Contribute](CONTRIBUTING.md) · [Discussions](https://github.com/sauravsingla/agentweave/discussions) · [Road to 1.0](docs/ROAD_TO_1_0.md) · [Paper](https://arxiv.org/abs/2608.23078)
+**Quick links:** [30-second start](#30-second-start) · [Canonical runtime](#canonical-runtime) · [Results](#results-at-a-glance) · [0.7 quickstart](docs/QUICKSTART_0_7.md) · [MCP](docs/MCP_INTEGRATION.md) · [Contribute](CONTRIBUTING.md) · [Discussions](https://github.com/sauravsingla/agentweave/discussions) · [Road to 1.0](docs/ROAD_TO_1_0.md) · [Paper](https://arxiv.org/abs/2608.23078) · [Zenodo v0.7.0](https://zenodo.org/records/22913460)
 
 ```text
 catalog
