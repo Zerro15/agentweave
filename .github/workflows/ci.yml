@@ -17,20 +17,6 @@ jobs:
           python-version: '3.11'
       - name: Verify release and research-software metadata
         run: python scripts/check_release_metadata.py
-      - name: Inspect Zenodo concept identifier
-        continue-on-error: true
-        run: |
-          python - <<'PY'
-          import json
-          import urllib.request
-
-          with urllib.request.urlopen('https://zenodo.org/api/records/22913460', timeout=30) as response:
-              record = json.load(response)
-          print('ZENODO_CONCEPT_DOI=' + str(record.get('conceptdoi')))
-          print('ZENODO_CONCEPT_RECID=' + str(record.get('conceptrecid')))
-          print('ZENODO_PARENT=' + json.dumps(record.get('parent', {}), sort_keys=True))
-          print('ZENODO_RELATIONS=' + json.dumps(record.get('relations', {}), sort_keys=True))
-          PY
 
   test-python:
     runs-on: ubuntu-latest
