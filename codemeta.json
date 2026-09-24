@@ -13,7 +13,11 @@
   "programmingLanguage": "Python",
   "runtimePlatform": "Python >=3.11",
   "developmentStatus": "active",
-  "identifier": "https://doi.org/10.5281/zenodo.22913460",
+  "identifier": "https://doi.org/10.5281/zenodo.22913459",
+  "sameAs": [
+    "https://doi.org/10.5281/zenodo.22913460",
+    "https://zenodo.org/records/22913460"
+  ],
   "referencePublication": "https://arxiv.org/abs/2608.23078",
   "author": {
     "@id": "https://orcid.org/0000-0002-6404-3988",
