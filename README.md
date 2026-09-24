@@ -304,6 +304,7 @@ Legacy multi-agent orchestration remains available during the pre-1.0 migration,
 | BFCL reproduction | [`docs/BFCL_REPRODUCE.md`](docs/BFCL_REPRODUCE.md) |
 | API compatibility | [`docs/API_COMPATIBILITY.md`](docs/API_COMPATIBILITY.md) |
 | Research paper | [`PAPER.md`](PAPER.md) · [arXiv:2608.23078](https://arxiv.org/abs/2608.23078) |
+| Software archive | [Zenodo v0.7.0](https://zenodo.org/records/22913460) · [DOI: 10.5281/zenodo.22913460](https://doi.org/10.5281/zenodo.22913460) |
 | Research citation | [`CITATION.cff`](CITATION.cff) |
 
 ## Project status
@@ -318,12 +319,16 @@ External reproductions are especially valuable. If you test AgentWeave on your o
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`SECURITY.md`](SECURITY.md), [`CHANGELOG.md`](CHANGELOG.md), and [`CITATION.cff`](CITATION.cff).
 
-## Paper
+## Paper and software citation
 
+**Research paper:**  
 **AgentWeave: Routing Before Reasoning for Efficient Function Calling in Tool-Rich Language Models**  
 [arXiv:2608.23078](https://arxiv.org/abs/2608.23078) · [`PAPER.md`](PAPER.md)
 
-If you use AgentWeave in research, please cite the paper and repository.
+**Archived software:**  
+**AgentWeave v0.7.0** · [DOI: 10.5281/zenodo.22913460](https://doi.org/10.5281/zenodo.22913460) · [Zenodo record](https://zenodo.org/records/22913460)
+
+If you use AgentWeave in research, cite the paper for the research contribution and the Zenodo DOI when citing or reproducing the archived v0.7.0 software release.
 
 ## License
 
