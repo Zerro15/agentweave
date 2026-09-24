@@ -13,12 +13,13 @@ AgentWeave studies deterministic pre-inference routing for tool-rich language-mo
 
 ### Software artifact
 
-**AgentWeave v0.7.0**  
-**DOI:** https://doi.org/10.5281/zenodo.22913460  
+**Evolving AgentWeave project — Concept DOI:** https://doi.org/10.5281/zenodo.22913459  
+
+**AgentWeave v0.7.0 — Version DOI:** https://doi.org/10.5281/zenodo.22913460  
 **Zenodo:** https://zenodo.org/records/22913460  
 **GitHub release:** https://github.com/sauravsingla/agentweave/releases/tag/v0.7.0
 
-The paper and software archive are distinct research objects: cite the paper for the research contribution and the Zenodo DOI when citing or reproducing the archived AgentWeave v0.7.0 software release.
+Use the Concept DOI when referring to AgentWeave as an evolving software project. Use the version DOI when citing or reproducing the archived v0.7.0 software release. The arXiv identifier remains the citation for the research paper.
 
 ### Research boundary
 
