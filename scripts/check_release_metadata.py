@@ -35,8 +35,10 @@ def main() -> None:
     parser.add_argument("--tag", help="Git tag, for example v0.7.0")
     args = parser.parse_args()
 
-    pyproject = tomllib.loads(_read("pyproject.toml"))
+    pyproject_text = _read("pyproject.toml")
+    pyproject = tomllib.loads(pyproject_text)
     package_version = pyproject["project"]["version"]
+    project_urls = pyproject["project"].get("urls", {})
 
     init_text = _read("agentweave/__init__.py")
     init_match = re.search(
@@ -48,11 +50,19 @@ def main() -> None:
     cff_text = _read("CITATION.cff")
     cff_version = _cff_scalar(cff_text, "version")
     assert cff_version, "CITATION.cff version not found"
+    cff_release_date = _cff_scalar(cff_text, "date-released")
 
     codemeta = json.loads(_read("codemeta.json"))
     codemeta_version = str(codemeta.get("version", ""))
     assert codemeta.get("@context") == "https://w3id.org/codemeta/3.1", (
         "codemeta.json must use the CodeMeta 3.1 context"
+    )
+    assert codemeta.get("datePublished") == cff_release_date, (
+        "codemeta.json datePublished must match CITATION.cff date-released"
+    )
+    expected_download_url = f"https://pypi.org/project/agentweave-router/{package_version}/"
+    assert codemeta.get("downloadUrl") == expected_download_url, (
+        f"codemeta.json downloadUrl must be {expected_download_url}"
     )
 
     versions = {
@@ -92,6 +102,12 @@ def main() -> None:
         assert _contains_identifier(codemeta.get("identifier"), expected_doi_url), (
             "codemeta.json identifier does not match the archived version DOI"
         )
+        assert project_urls.get("Software DOI") == expected_doi_url, (
+            "pyproject.toml Software DOI does not match the archived version DOI"
+        )
+        assert project_urls.get("Software Archive") == expected_record_url, (
+            "pyproject.toml Software Archive does not match the archived Zenodo record"
+        )
     else:
         stale_values: list[str] = []
         for metadata in releases.values():
@@ -103,22 +119,22 @@ def main() -> None:
                 ]
             )
 
-        leaked = [
-            value
-            for value in stale_values
-            if value and (value in cff_text or value in codemeta_text)
-        ]
+        release_metadata_text = "\n".join([cff_text, codemeta_text, pyproject_text])
+        leaked = [value for value in stale_values if value and value in release_metadata_text]
         assert not leaked, (
             "stale Zenodo metadata from an older release is present in release metadata: "
             + ", ".join(sorted(set(leaked)))
             + ". Remove old version-specific DOI/archive fields before tagging this version; "
             "after Zenodo archives the release, add its DOI to docs/zenodo_releases.json, "
-            "CITATION.cff, and codemeta.json."
+            "CITATION.cff, codemeta.json, and pyproject.toml."
         )
 
     concept_doi = archive_registry.get("concept_doi")
     if concept_doi:
         concept_doi_url = f"https://doi.org/{concept_doi}"
+        assert project_urls.get("Concept DOI") == concept_doi_url, (
+            "pyproject.toml Concept DOI must expose the stable DOI for the evolving project"
+        )
         assert _contains_identifier(codemeta.get("sameAs"), concept_doi_url) or _contains_identifier(
             codemeta.get("identifier"), concept_doi_url
         ), "codemeta.json must expose the Concept DOI for the evolving project"
